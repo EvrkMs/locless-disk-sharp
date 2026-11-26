@@ -13,7 +13,7 @@ internal sealed record PxeOptions
     public string BootScriptUrl { get; set; } = "";
 }
 
-internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes,
+internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status,
     ILogger<PxeHostedService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -38,6 +38,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
 
                 await StopListenersAsync();
                 applied = desired;
+                status.Set(desired.Enabled ? "Служба запускается." : "Службы PXE выключены.");
                 if (desired.Enabled)
                 {
                     listenerLifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -71,19 +72,21 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             address.AddressFamily != AddressFamily.InterNetwork || address.Equals(IPAddress.Any) ||
             address.Equals(IPAddress.Broadcast) || address.GetAddressBytes()[0] >= 224)
         {
+            status.Set("Выбранный IPv4 недействителен.");
             log.LogWarning("PXE is enabled, but its listening IPv4 is invalid");
             return;
         }
 
-        string root;
+        string? root = null;
+        string? bootError = null;
         try
         {
             root = ValidateBoot(options, environment.ContentRootPath);
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException)
         {
-            log.LogWarning(error, "PXE configuration is incomplete");
-            return;
+            bootError = error.Message;
+            log.LogWarning(error, "PXE can discover clients, but boot is unavailable");
         }
 
         var dhcp = new ProxyDhcp(address, options, ObserveAsync, log);
@@ -94,7 +97,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             var computers = scope.ServiceProvider.GetRequiredService<IPxeComputers>();
             try
             {
-                return await computers.ObserveAsync(mac, ct);
+                return await computers.ObserveAsync(mac, ct) && root is not null;
             }
             catch (System.Data.Common.DbException error)
             {
@@ -102,19 +105,19 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
                 return false;
             }
         }
-        var tftp = new TftpServer(root, options.BootScriptUrl, log);
+        var tftp = root is null ? null : new TftpServer(root, options.BootScriptUrl, log);
         try
         {
             await Task.WhenAll(
-                RunListenerAsync(address, 67, true, (socket, ct) => dhcp.ServeAsync(socket, true, ct), stoppingToken),
+                RunListenerAsync(address, 67, true, (socket, ct) => dhcp.ServeAsync(socket, true, ct), stoppingToken, bootError),
                 RunListenerAsync(address, 4011, false, (socket, ct) => dhcp.ServeAsync(socket, false, ct), stoppingToken),
-                tftp.ServeAsync(address, stoppingToken));
+                tftp?.ServeAsync(address, stoppingToken) ?? Task.CompletedTask);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
     }
 
     private async Task RunListenerAsync(IPAddress address, int port, bool broadcast,
-        Func<Socket, CancellationToken, Task> serve, CancellationToken ct)
+        Func<Socket, CancellationToken, Task> serve, CancellationToken ct, string? bootError = null)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -125,11 +128,16 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
                     socket.ExclusiveAddressUse = true;
                 socket.EnableBroadcast = broadcast;
                 socket.Bind(new IPEndPoint(address, port));
+                if (port == 67)
+                    status.Set(bootError is null ? $"Обнаружение ПК активно на {address}:67/UDP."
+                        : $"Обнаружение ПК активно на {address}:67/UDP. Загрузка недоступна: {bootError}");
                 log.LogInformation("PXE listening on {Address}:{Port}/UDP", address, port);
                 await serve(socket, ct);
             }
             catch (SocketException error)
             {
+                if (port == 67)
+                    status.Set($"Не удалось открыть {address}:67/UDP ({error.SocketErrorCode}). Повтор через 5 секунд.");
                 log.LogWarning(error, "PXE socket {Address}:{Port}/UDP failed. Retrying in 5 seconds",
                     address, port);
             }
@@ -141,13 +149,13 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
     {
         string root = Path.GetFullPath(options.EfiRoot, contentRoot);
         if (!Directory.Exists(root))
-            throw new DirectoryNotFoundException($"PXE EFI directory does not exist: {root}");
+            throw new DirectoryNotFoundException($"Папка EFI не найдена: {root}");
 
         if (!IsBootField(options.BootFile) ||
             !Uri.TryCreate(options.BootScriptUrl.Replace("{mac}", "00:00:00:00:00:00"),
                 UriKind.Absolute, out var script) ||
             script.Scheme is not ("http" or "https") || !IsBootField(script.OriginalString))
-            throw new InvalidOperationException("Configure a valid Pxe:BootFile and HTTP(S) Pxe:BootScriptUrl.");
+            throw new InvalidOperationException("Укажите корректный HTTP(S)-адрес скрипта iPXE и имя загрузочного файла.");
 
         return root;
     }

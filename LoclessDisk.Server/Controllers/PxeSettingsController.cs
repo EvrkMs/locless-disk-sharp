@@ -7,7 +7,7 @@ namespace LoclessDisk.Server.Controllers;
 [ApiController]
 [Route("api/settings/pxe")]
 public sealed class PxeSettingsController(IPxeSettingsStore store, IConfiguration configuration,
-    IHostEnvironment environment) : ControllerBase
+    PxeListenerStatus listener) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
@@ -15,7 +15,7 @@ public sealed class PxeSettingsController(IPxeSettingsStore store, IConfiguratio
         var defaults = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
         var settings = await store.ReadAsync(ct) ?? new(defaults.Enabled, defaults.BindAddress);
         return Ok(new { settings.Enabled, settings.BindAddress,
-            bootScriptUrl = settings.BootScriptUrl ?? defaults.BootScriptUrl, interfaces = PxeInterfaces.List() });
+            bootScriptUrl = settings.BootScriptUrl ?? defaults.BootScriptUrl, interfaces = PxeInterfaces.List(), listenerStatus = listener.Message });
     }
 
     [HttpPut]
@@ -26,21 +26,6 @@ public sealed class PxeSettingsController(IPxeSettingsStore store, IConfiguratio
             return Problem("Выберите IPv4 активного сетевого интерфейса.", statusCode: 400);
 
         settings = settings with { BootScriptUrl = settings.BootScriptUrl?.Trim() };
-        {
-            var options = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
-            try
-            {
-                PxeHostedService.ValidateBoot(options with
-                {
-                    BootScriptUrl = settings.BootScriptUrl ?? options.BootScriptUrl
-                }, environment.ContentRootPath);
-            }
-            catch (Exception error) when (error is InvalidOperationException or IOException or ArgumentException)
-            {
-                return Problem(error.Message, statusCode: 400);
-            }
-        }
-
         await store.SaveAsync(settings, ct);
         return Ok(settings);
     }

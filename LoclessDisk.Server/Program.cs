@@ -26,6 +26,7 @@ builder.Services.AddScoped<IPxeSettingsStore, SqlitePxeSettingsStore>();
 builder.Services.AddScoped<IPxeComputers, SqlitePxeComputers>();
 
 builder.Services.AddControllers();
+builder.Services.AddSingleton<PxeListenerStatus>();
 builder.Services.AddHostedService<PxeHostedService>();
 
 var app = builder.Build();

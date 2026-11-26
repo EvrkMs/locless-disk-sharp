@@ -5,6 +5,7 @@ const address = document.getElementById("pxeAddress");
 const bootScript = document.getElementById("pxeBootScript");
 const enabled = document.getElementById("pxeEnabled");
 const note = document.getElementById("pxeNote");
+const listenerStatus = document.getElementById("pxeListenerStatus");
 const save = form.querySelector("button");
 
 save.disabled = true;
@@ -17,6 +18,7 @@ try {
   address.value = settings.bindAddress ?? "";
   enabled.checked = settings.enabled;
   bootScript.value = settings.bootScriptUrl ?? "";
+  listenerStatus.textContent = settings.listenerStatus;
   save.disabled = false;
 } catch (error) {
   note.textContent = error.message;
@@ -41,3 +43,13 @@ form.addEventListener("submit", async event => {
     save.disabled = false;
   }
 });
+
+window.setInterval(async () => {
+  if (location.hash !== "#settings") return;
+  try {
+    const settings = await requestJson("/api/settings/pxe");
+    listenerStatus.textContent = settings.listenerStatus;
+  } catch (error) {
+    listenerStatus.textContent = error.message;
+  }
+}, 3000);
