@@ -11,6 +11,7 @@ internal sealed record PxeOptions
     public string EfiRoot { get; set; } = "EFI";
     public string BootFile { get; set; } = "ipxe-shim.efi";
     public string BootScriptUrl { get; set; } = "";
+    public int HttpPort { get; set; } = 8080;
 }
 
 internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status,
@@ -77,10 +78,17 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             return;
         }
 
+        bool useBuiltInHttp = string.IsNullOrWhiteSpace(options.BootScriptUrl);
         string? root = null;
         string? bootError = null;
         try
         {
+            if (useBuiltInHttp)
+            {
+                if (options.HttpPort is < 1 or > 65535)
+                    throw new InvalidOperationException("Укажите порт HTTP PXE от 1 до 65535.");
+                options = options with { BootScriptUrl = BootHttpServer.ScriptUrl(address, options.HttpPort) };
+            }
             root = ValidateBoot(options, environment.ContentRootPath);
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException)
@@ -89,6 +97,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             log.LogWarning(error, "PXE can discover clients, but boot is unavailable");
         }
 
+        var http = root is not null && useBuiltInHttp ? new BootHttpServer(log) : null;
         var dhcp = new ProxyDhcp(address, options, ObserveAsync, log);
 
         async Task<bool> ObserveAsync(string mac, CancellationToken ct)
@@ -97,7 +106,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             var computers = scope.ServiceProvider.GetRequiredService<IPxeComputers>();
             try
             {
-                return await computers.ObserveAsync(mac, ct) && root is not null;
+                return await computers.ObserveAsync(mac, ct) && root is not null && (http?.IsListening ?? true);
             }
             catch (System.Data.Common.DbException error)
             {
@@ -111,7 +120,8 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             await Task.WhenAll(
                 RunListenerAsync(address, 67, true, (socket, ct) => dhcp.ServeAsync(socket, true, ct), stoppingToken, bootError),
                 RunListenerAsync(address, 4011, false, (socket, ct) => dhcp.ServeAsync(socket, false, ct), stoppingToken),
-                tftp?.ServeAsync(address, stoppingToken) ?? Task.CompletedTask);
+                tftp?.ServeAsync(address, stoppingToken) ?? Task.CompletedTask,
+                http?.ServeAsync(address, options.HttpPort, stoppingToken) ?? Task.CompletedTask);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
     }

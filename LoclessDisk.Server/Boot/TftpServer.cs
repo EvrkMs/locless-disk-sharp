@@ -152,7 +152,7 @@ internal sealed class TftpServer(string root, string scriptUrl, ILogger log)
             string url = scriptUrl.Replace("{mac}", "${netX/mac}");
             return new MemoryStream(Encoding.ASCII.GetBytes(
                 "#!ipxe\ndhcp || dhcp || goto disk\nchain " + url +
-                " || goto disk\n:disk\nsanboot --no-describe --drive 0x80 || exit\n"), writable: false);
+                " || goto disk\n:disk\n" + BootScripts.LocalDisk), writable: false);
         }
 
         string path = root;
