@@ -1,6 +1,6 @@
 using System.Net;
-using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using LoclessDisk.Core;
 
 namespace LoclessDisk.Server.Boot;
 
@@ -11,45 +11,95 @@ internal sealed class PxeOptions
     public string EfiRoot { get; set; } = "EFI";
     public string BootFile { get; set; } = "ipxe-shim.efi";
     public string BootScriptUrl { get; set; } = "";
-    public string[] AllowedMacs { get; set; } = [];
 }
 
-internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment,
+internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes,
     ILogger<PxeHostedService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var options = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
-        if (!options.Enabled)
-            return;
+        PxeSettings? applied = null;
+        CancellationTokenSource? listenerLifetime = null;
+        Task listeners = Task.CompletedTask;
+        using var poll = new PeriodicTimer(TimeSpan.FromSeconds(2));
 
-        if (!IPAddress.TryParse(options.BindAddress, out var address) ||
+        try
+        {
+            do
+            {
+                await using var scope = scopes.CreateAsyncScope();
+                var saved = await scope.ServiceProvider.GetRequiredService<IPxeSettingsStore>()
+                    .ReadAsync(stoppingToken);
+                var desired = saved ?? new PxeSettings(options.Enabled, options.BindAddress);
+                if (desired == applied)
+                    continue;
+
+                await StopListenersAsync();
+                applied = desired;
+                if (desired.Enabled)
+                {
+                    listenerLifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    listeners = RunPxeAsync(options, desired.BindAddress, listenerLifetime.Token);
+                }
+            }
+            while (await poll.WaitForNextTickAsync(stoppingToken));
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        finally { await StopListenersAsync(); }
+
+        async Task StopListenersAsync()
+        {
+            if (listenerLifetime is null)
+                return;
+            await listenerLifetime.CancelAsync();
+            try { await listeners; }
+            catch (OperationCanceledException) when (listenerLifetime.IsCancellationRequested) { }
+            finally
+            {
+                listenerLifetime.Dispose();
+                listenerLifetime = null;
+            }
+        }
+    }
+
+    private async Task RunPxeAsync(PxeOptions options, string? bindAddress, CancellationToken stoppingToken)
+    {
+        if (!IPAddress.TryParse(bindAddress, out var address) ||
             address.AddressFamily != AddressFamily.InterNetwork || address.Equals(IPAddress.Any) ||
             address.Equals(IPAddress.Broadcast) || address.GetAddressBytes()[0] >= 224)
-            throw new InvalidOperationException("Pxe:BindAddress must be a specific IPv4 address.");
-
-        string root = Path.GetFullPath(options.EfiRoot, environment.ContentRootPath);
-        if (!Directory.Exists(root))
-            throw new DirectoryNotFoundException($"PXE EFI directory does not exist: {root}");
-
-        if (!IsBootField(options.BootFile) ||
-            !Uri.TryCreate(options.BootScriptUrl.Replace("{mac}", "00:00:00:00:00:00"),
-                UriKind.Absolute, out var script) ||
-            script.Scheme is not ("http" or "https") || !IsBootField(script.OriginalString))
-            throw new InvalidOperationException("Configure a valid Pxe:BootFile and HTTP(S) Pxe:BootScriptUrl.");
-
-        var allowed = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string mac in options.AllowedMacs)
         {
-            if (!PhysicalAddress.TryParse(mac.Replace(':', '-'), out var parsed) ||
-                parsed.GetAddressBytes().Length != 6)
-                throw new InvalidOperationException($"Invalid MAC in Pxe:AllowedMacs: {mac}");
-            allowed.Add(parsed.ToString());
+            log.LogWarning("PXE is enabled, but its listening IPv4 is invalid");
+            return;
         }
-        if (allowed.Count == 0)
-            log.LogWarning("PXE allow list is empty. ProxyDHCP will stay silent");
 
-        var dhcp = new ProxyDhcp(address, options, allowed, log);
+        string root;
+        try
+        {
+            root = ValidateBoot(options, environment.ContentRootPath);
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException)
+        {
+            log.LogWarning(error, "PXE configuration is incomplete");
+            return;
+        }
+
+        var dhcp = new ProxyDhcp(address, options, ObserveAsync, log);
+
+        async Task<bool> ObserveAsync(string mac, CancellationToken ct)
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var computers = scope.ServiceProvider.GetRequiredService<IPxeComputers>();
+            try
+            {
+                return await computers.ObserveAsync(mac, ct);
+            }
+            catch (System.Data.Common.DbException error)
+            {
+                log.LogWarning(error, "Could not record PXE client {Mac}", mac);
+                return false;
+            }
+        }
         var tftp = new TftpServer(root, options.BootScriptUrl, log);
         try
         {
@@ -83,6 +133,21 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             }
             await Task.Delay(TimeSpan.FromSeconds(5), ct);
         }
+    }
+
+    internal static string ValidateBoot(PxeOptions options, string contentRoot)
+    {
+        string root = Path.GetFullPath(options.EfiRoot, contentRoot);
+        if (!Directory.Exists(root))
+            throw new DirectoryNotFoundException($"PXE EFI directory does not exist: {root}");
+
+        if (!IsBootField(options.BootFile) ||
+            !Uri.TryCreate(options.BootScriptUrl.Replace("{mac}", "00:00:00:00:00:00"),
+                UriKind.Absolute, out var script) ||
+            script.Scheme is not ("http" or "https") || !IsBootField(script.OriginalString))
+            throw new InvalidOperationException("Configure a valid Pxe:BootFile and HTTP(S) Pxe:BootScriptUrl.");
+
+        return root;
     }
 
     private static bool IsBootField(string value) =>

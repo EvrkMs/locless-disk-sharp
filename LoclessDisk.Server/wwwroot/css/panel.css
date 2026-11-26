@@ -113,5 +113,7 @@ form input { flex: 1 1 180px; }
   .actions button { margin-top: 4px; }
 }
 
-#settingsForm { display: block; }
+#settingsForm, #pxeForm { display: block; }
+#pxeAddress { max-width: 100%; }
+#pxeForm .pxe-toggle { margin: 0; align-self: center; }
 #scanResult[hidden], #imageTable[hidden], #noImages[hidden] { display: none; }
