@@ -16,6 +16,7 @@ public static class AgentTaskKind
     public const string Deploy = "deploy";
     public const string Clone = "clone";
     public const string Format = "format";
+    public const string CSharpFormat = "format-csharp";
 }
 
 public sealed record LinkCheck(long Id, string Mac, string Status, int Percent, string Stage,

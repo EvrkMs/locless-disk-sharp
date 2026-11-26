@@ -75,11 +75,19 @@ public sealed class SqliteLinkChecks(CatalogDb db) : ILinkChecks
     {
         string status = ok ? LinkCheckStatus.Succeeded : LinkCheckStatus.Failed;
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        int updated = await Active(id, mac).ExecuteUpdateAsync(update => update
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var active = Active(id, mac);
+        bool forgetRecovery = ok && await active.AnyAsync(row =>
+            row.Kind == AgentTaskKind.Format || row.Kind == AgentTaskKind.CSharpFormat, ct);
+        int updated = await active.ExecuteUpdateAsync(update => update
             .SetProperty(row => row.FinishedAt, now)
             .SetProperty(row => row.Status, status)
             .SetProperty(row => row.Percent, row => ok ? 100 : row.Percent)
             .SetProperty(row => row.Message, message), ct);
+        if (updated != 0 && forgetRecovery)
+            await db.PxeComputers.Where(row => row.Mac == mac).ExecuteUpdateAsync(update =>
+                update.SetProperty(row => row.RecoveryTable, (byte[]?)null), ct);
+        await transaction.CommitAsync(ct);
         return updated != 0 || await db.LinkChecks.AnyAsync(row =>
             row.Id == id && row.Mac == mac && row.Status == status, ct);
     }

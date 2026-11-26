@@ -11,7 +11,7 @@ let editorRequest = 0;
 let images = [];
 let computers = [];
 let checks = [];
-const kinds = { agent: "Проверка связи", "agent-csharp": "Проверка C#-агента", clone: "Клонирование", deploy: "Развёртывание", format: "Форматирование" };
+const kinds = { agent: "Проверка связи", "agent-csharp": "Проверка C#-агента", clone: "Клонирование", deploy: "Развёртывание", format: "Форматирование", "format-csharp": "Форматирование (C#)" };
 const states = { queued: "В очереди", running: "Выполняется", succeeded: "Готово", failed: "Ошибка", cancelled: "Отменена" };
 
 function formatMac(mac) {
@@ -93,6 +93,8 @@ function hostActions(computer) {
     { text: "Проверить C#-агент", run: () => queueTask(computer, "agent-csharp") },
     { text: "Форматировать в том WB", danger: true, confirm: "Стереть диск " + computer.name + "?",
       run: () => queueTask(computer, "format") },
+    { text: "Форматировать в том WB (C#)", danger: true, confirm: "Стереть диск " + computer.name + "?",
+      run: () => queueTask(computer, "format-csharp") },
     null, edit, remove
   ];
 }
@@ -101,7 +103,7 @@ async function queueTask(computer, kind) {
   try {
     await requestJson("/api/hosts/" + computer.mac + "/task", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind, confirmed: kind === "deploy" || kind === "format" })
+      body: JSON.stringify({ kind, confirmed: ["deploy", "format", "format-csharp"].includes(kind) })
     });
     location.hash = "#tasks";
   } catch (error) { showError(error.message); }

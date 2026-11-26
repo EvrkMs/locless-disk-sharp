@@ -96,18 +96,44 @@ internal static class Program
         using var task = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
         if (task.RootElement.ValueKind != JsonValueKind.Object ||
             !task.RootElement.TryGetProperty("kind", out var kind) ||
-            kind.ValueKind != JsonValueKind.String || kind.GetString() != "agent-csharp" ||
+            kind.ValueKind != JsonValueKind.String || kind.GetString() is not ("agent-csharp" or "format-csharp") ||
             !task.RootElement.TryGetProperty("id", out var id) ||
             id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out long taskId) || taskId <= 0)
             return "HTTP 200 · Sharp ответил, задачи проверки C#-агента нет.";
 
         var url = new Uri(target.Url, $"/agent/tasks/{taskId}/finish");
-        var report = new ProbeReport(target.Mac!, true, "C#-агент запустился в WinPE и подключился к Sharp.");
+        bool formatting = kind.GetString() == "format-csharp";
+        var report = formatting && OperatingSystem.IsWindows()
+            ? await FormatAsync(target, taskId)
+            : new ProbeReport(target.Mac!, true, "C#-агент запустился в WinPE и подключился к Sharp.");
         using var body = JsonContent.Create(report, ProbeJsonContext.Default.ProbeReport);
         using var result = await Client.PostAsync(url, body);
         return result.StatusCode == HttpStatusCode.NoContent
-            ? "HTTP 200 · Связь проверена. Sharp принял результат."
+            ? formatting ? report.Message : "HTTP 200 · Связь проверена. Sharp принял результат."
             : $"HTTP {(int)result.StatusCode} · Sharp ответил, но результат не принят.";
+    }
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static async Task<ProbeReport> FormatAsync(ProbeTarget target, long taskId)
+    {
+        try
+        {
+            string path = WinPeFormat.SelectDisk();
+            if (!ProbeWindow.ConfirmFormat(path))
+                return new ProbeReport(target.Mac!, false, "Оператор отменил форматирование в WinPE.");
+            var progressUrl = new Uri(target.Url, $"/agent/tasks/{taskId}/progress");
+            using var progress = JsonContent.Create(
+                new ProbeProgress(target.Mac!, 0, "format", "Форматирование диска."),
+                ProbeJsonContext.Default.ProbeProgress);
+            using var response = await Client.PostAsync(progressUrl, progress);
+            if (response.StatusCode != HttpStatusCode.NoContent)
+                return new ProbeReport(target.Mac!, false, "Сервер не подтвердил активную задачу форматирования.");
+            await WinPeFormat.FormatAsync(path);
+            return new ProbeReport(target.Mac!, true, "Диск отформатирован. Создан том WB.");
+        }
+        catch (Exception error)
+        {
+            return new ProbeReport(target.Mac!, false, "Форматирование: " + error.Message);
+        }
     }
 }
 
@@ -116,5 +142,12 @@ internal sealed record ProbeReport(
     [property: JsonPropertyName("ok")] bool Ok,
     [property: JsonPropertyName("message")] string Message);
 
+internal sealed record ProbeProgress(
+    [property: JsonPropertyName("mac")] string Mac,
+    [property: JsonPropertyName("percent")] int Percent,
+    [property: JsonPropertyName("stage")] string Stage,
+    [property: JsonPropertyName("message")] string Message);
+
+[JsonSerializable(typeof(ProbeProgress))]
 [JsonSerializable(typeof(ProbeReport))]
 internal sealed partial class ProbeJsonContext : JsonSerializerContext;

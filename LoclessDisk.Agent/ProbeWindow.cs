@@ -7,7 +7,7 @@ internal static partial class ProbeWindow
 {
     private const uint Destroy = 0x0002, Command = 0x0111, SetFont = 0x0030, ProbeFinished = 0x8001;
     private const int CheckButton = 1, CloseButton = 2;
-    private static nint status, check;
+    private static nint status, check, close, window;
     private static Func<Task<string>>? probe;
     private static string? result;
 
@@ -34,6 +34,7 @@ internal static partial class ProbeWindow
         nint hwnd = CreateWindow(0, windowClass, "Locless Disk · Агент WinPE", 0x00CA0000,
             Math.Max(0, (GetSystemMetrics(0) - width) / 2), Math.Max(0, (GetSystemMetrics(1) - height) / 2),
             width, height, 0, 0, instance, 0);
+        window = hwnd;
         if (hwnd == 0)
             return StartupFailed();
 
@@ -44,8 +45,8 @@ internal static partial class ProbeWindow
         status = Control("STATIC", error ?? "Деморежим. Добавьте fogs-agent.json для проверки сети.",
             0, 22, 120, 550, 48, 0);
         check = Control("BUTTON", "Проверить снова", 0x00010000, 22, 178, 155, 30, CheckButton);
-        if (status == 0 || check == 0 ||
-            Control("BUTTON", "Закрыть", 0x00010000, 190, 178, 96, 30, CloseButton) == 0)
+        close = Control("BUTTON", "Закрыть", 0x00010000, 190, 178, 96, 30, CloseButton);
+        if (status == 0 || check == 0 || close == 0)
             return StartupFailed();
         EnableWindow(check, probe is null ? 0 : 1);
         ShowWindow(hwnd, 5);
@@ -69,6 +70,10 @@ internal static partial class ProbeWindow
         }
     }
 
+    internal static bool ConfirmFormat(string disk) =>
+        MessageBox(window, $"Все данные на {disk} будут удалены. Создать том WB?",
+            "Locless Disk · Форматирование", 0x00010134) == 6;
+
     private static int StartupFailed()
     {
         MessageBox(0, "Не удалось создать окно Win32.", "Locless Disk", 0x10);
@@ -80,6 +85,7 @@ internal static partial class ProbeWindow
         if (probe is not { } execute)
             return;
         EnableWindow(check, 0);
+        EnableWindow(close, 0);
         SetWindowText(status, "Проверяем HTTP-соединение с Sharp…");
         _ = Task.Run(async () =>
         {
@@ -94,6 +100,8 @@ internal static partial class ProbeWindow
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static nint HandleMessage(nint hwnd, uint message, nint wParam, nint lParam)
     {
+        if (message == 0x0010 && IsWindowEnabled(close) == 0)
+            return 0;
         if (message == Destroy)
         {
             PostQuitMessage(0);
@@ -103,6 +111,7 @@ internal static partial class ProbeWindow
         {
             SetWindowText(status, Volatile.Read(ref result) ?? "");
             EnableWindow(check, 1);
+            EnableWindow(close, 1);
             return 0;
         }
         if (message == Command)
@@ -156,6 +165,8 @@ internal static partial class ProbeWindow
     private static partial int ShowWindow(nint window, int mode);
     [LibraryImport("user32")]
     private static partial int EnableWindow(nint window, int enable);
+    [LibraryImport("user32")]
+    private static partial int IsWindowEnabled(nint window);
     [LibraryImport("user32", EntryPoint = "SetWindowTextW", StringMarshalling = StringMarshalling.Utf16)]
     private static partial int SetWindowText(nint window, string text);
     [LibraryImport("gdi32")]

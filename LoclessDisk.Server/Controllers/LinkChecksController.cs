@@ -34,12 +34,12 @@ public sealed class LinkChecksController(ILinkChecks tasks, IPxeComputers comput
         if (mac.Length != 12 || !mac.All(Uri.IsHexDigit))
             return Problem("Неверный MAC-адрес.", statusCode: 400);
 
-        if (input.Kind is not (AgentTaskKind.Check or AgentTaskKind.CSharpProbe or AgentTaskKind.Format or AgentTaskKind.Deploy or AgentTaskKind.Clone))
+        if (input.Kind is not (AgentTaskKind.Check or AgentTaskKind.CSharpProbe or AgentTaskKind.CSharpFormat or AgentTaskKind.Format or AgentTaskKind.Deploy or AgentTaskKind.Clone))
             return Problem("Неизвестная задача.", statusCode: 400);
-        if ((input.Kind is AgentTaskKind.Format or AgentTaskKind.Deploy) && !input.Confirmed)
+        if ((input.Kind is AgentTaskKind.Format or AgentTaskKind.CSharpFormat or AgentTaskKind.Deploy) && !input.Confirmed)
             return Problem("Подтвердите запись на диск.", statusCode: 400);
 
-        if (input.Kind == AgentTaskKind.CSharpProbe)
+        if (input.Kind is AgentTaskKind.CSharpProbe or AgentTaskKind.CSharpFormat)
         {
             var options = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
             var settings = await pxeSettings.ReadAsync(ct);

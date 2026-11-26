@@ -6,4 +6,6 @@
 - Для ручной проверки сети укажите адрес панели Sharp, например `LoclessDisk.Agent.exe --probe http://192.168.1.10:8080/health`. Подставьте фактический порт панели.
 - Для PXE положите новый LoclessDisk.Agent.exe в EFI\agent рядом с действующим агентом. В разделе «ПК» откройте «Действия» → «Проверить C#-агент» и загрузите тестовый ПК по сети. Sharp сам передаст адрес и MAC в fogs-agent.json. При успехе результат появится и в окне WinPE, и в разделе «Задачи».
 
-GitHub Actions собирает Native AOT для `win-x64` и сохраняет `LoclessDisk.Agent.exe` в артефакте `locless-disk-agent-winpe-x64`. Для локальной сборки кода в WSL достаточно `dotnet build LoclessDisk.Agent`.
+GitHub Actions собирает автономный .NET-пакет для `win-x64` и сохраняет `LoclessDisk.Agent.exe` в артефакте `locless-disk-agent-winpe-x64`. Для локальной сборки кода в WSL достаточно `dotnet build LoclessDisk.Agent`.
+
+Для форматирования на тестовом ПК выберите «Форматировать в том WB (C#)» и подтвердите операцию в WinPE. Агент работает с одним внутренним диском. При нескольких подходящих дисках он прекращает операцию.

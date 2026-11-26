@@ -36,7 +36,7 @@ internal sealed partial class GoAgentEndpoints(
             if (task is null)
                 return Script(exitScript);
 
-            bool csharp = task.Kind == AgentTaskKind.CSharpProbe;
+            bool csharp = task.Kind is AgentTaskKind.CSharpProbe or AgentTaskKind.CSharpFormat;
             string agent = csharp ? CSharpAgentFile : GoAgentFile;
             string shell = csharp ? "winpeshl-csharp.ini" : "winpeshl.ini";
             string[] required = ["wimboot", BootWim, agent];
@@ -94,7 +94,7 @@ internal sealed partial class GoAgentEndpoints(
             if (task is null)
                 return Results.NoContent();
             var computers = scope.ServiceProvider.GetRequiredService<IPxeComputers>();
-            byte[]? table = task.Kind == AgentTaskKind.Format ? null : await computers.ReadRecoveryTableAsync(key, ct);
+            byte[]? table = task.Kind is AgentTaskKind.Format or AgentTaskKind.CSharpFormat ? null : await computers.ReadRecoveryTableAsync(key, ct);
             string? imageName = task.ImageId;
             if (imageName?.StartsWith("new:", StringComparison.Ordinal) == true)
                 imageName = imageName[4..];
