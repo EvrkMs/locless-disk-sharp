@@ -53,10 +53,17 @@ public sealed class LinkChecksController(ILinkChecks tasks, IPxeComputers comput
                 {
                     imageId = (await computers.ListAsync(ct)).FirstOrDefault(pc => pc.Mac == mac)?.ImageId;
                 }
-                if (imageId is null || (!imageId.StartsWith("new:", StringComparison.Ordinal) &&
-                    !(await catalog.ListAsync(ct)).Any(version => version.ImageId == imageId && !version.Disabled) &&
-                !(input.Kind == AgentTaskKind.Clone && (await catalog.ListEmptyAsync(ct)).Any(image => image.Id == imageId))))
+                if (imageId is null)
                     return Problem("Назначьте ПК доступный образ.", statusCode: 409);
+                if (!imageId.StartsWith("new:", StringComparison.Ordinal))
+                {
+                    var current = (await catalog.ListAsync(ct))
+                        .FirstOrDefault(version => version.ImageId == imageId && !version.Disabled);
+                    bool canCapture = input.Kind == AgentTaskKind.Clone && current is null &&
+                        (await catalog.ListEmptyAsync(ct)).Any(image => image.Id == imageId);
+                    if (!canCapture && (current is null || !current.Paths.All(System.IO.File.Exists)))
+                        return Problem("Файлы образа недоступны.", statusCode: 409);
+                }
             }
             if (await tasks.QueueAsync(mac, input.Kind, imageId, ct) is not { } task)
                 return Problem("ПК не зарегистрирован или у него уже есть активная задача.", statusCode: 409);

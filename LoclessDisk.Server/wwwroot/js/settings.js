@@ -1,3 +1,4 @@
+import { button, openMenu } from "./lib/menu.js";
 import { requestJson } from "./lib/http.js";
 
 const byId = id => document.getElementById(id);
@@ -55,84 +56,116 @@ async function showVersion(name, version) {
   }
 }
 
+let catalog = [];
+let computers = [];
+let tasks = [];
+let finishedClones;
+
 async function loadImages() {
-  const images = await requestJson("/api/images");
+  catalog = await requestJson("/api/images");
+  drawImages();
+  document.dispatchEvent(new CustomEvent("images-updated", { detail: catalog }));
+}
+
+document.addEventListener("computers-updated", event => {
+  computers = event.detail;
+  drawImages();
+});
+document.addEventListener("tasks-updated", event => {
+  tasks = event.detail;
+  const latest = tasks.find(task => task.kind === "clone" && task.status === "succeeded")?.id;
+  if (finishedClones !== latest) {
+    finishedClones = latest;
+    loadImages().catch(showError);
+  }
+  drawImages();
+});
+
+function drawImages() {
   const rows = document.createDocumentFragment();
-  for (const image of images) {
-    const row = document.createElement("tr");
+  let unavailable = 0;
+  for (const image of catalog) {
+    const versions = [...image.versions].reverse();
+    const current = image.versions.find(version => !version.disabled);
+    const busy = tasks.some(task => task.imageId === image.id && task.finishedAt === null);
     const title = cell(image.name, "name");
     title.title = image.path;
-    const versions = cell("");
-    if (!image.versions.length) {
-      versions.textContent = "Версий пока нет. Клонируйте эталон.";
-      const remove = document.createElement("button");
-      remove.className = "danger";
-      remove.textContent = "Удалить";
-      remove.onclick = async () => {
-        if (!window.confirm("Удалить образ «" + image.name + "»?")) return;
-        try {
-          await requestJson("/api/images/" + image.id, { method: "DELETE" });
-          await loadImages();
-        } catch (error) { showError(error); }
-      };
-      versions.append(" ", remove);
-      row.append(title, versions);
+    if (current?.missing) {
+      unavailable++;
+      const notice = document.createElement("div");
+      notice.className = "sub lost";
+      notice.textContent = "Файлы не найдены";
+      title.append(notice);
+    }
+    const actions = cell("", "actions");
+    const menu = button("Действия ▾", "", () => openMenu(menu, imageActions(image, current, busy)));
+    menu.setAttribute("aria-haspopup", "menu");
+    actions.append(menu);
+    const common = [title, cell(computers.filter(pc => pc.imageId === image.id && pc.name !== null).length),
+      cell(busy ? "Да" : "Нет")];
+    if (!versions.length) {
+      const row = document.createElement("tr");
+      const empty = cell("версий пока нет, клонируйте эталон", "when");
+      empty.colSpan = 3;
+      row.append(...common, empty, actions);
       rows.append(row);
       continue;
     }
-    const details = document.createElement("details");
-    const summary = document.createElement("summary");
-    const current = image.versions.find(version => !version.disabled);
-    summary.textContent = image.versions.length + (current ? " · " + current.file : "");
-    details.append(summary);
-    for (const version of [...image.versions].reverse()) {
-      const button = document.createElement("button");
-      button.textContent = version.file + (version.depth === 1 ? " · полный" : " · дельта");
-      button.onclick = () => showVersion(image.name, version);
-      const line = document.createElement("div");
-      line.className = "sub";
-      line.append(button);
-      if (version === current) line.append(" · текущая");
-      if (version.disabled || (current && version.number < current.number)) {
-        const restore = document.createElement("button");
-        restore.textContent = version.disabled ? "Вернуть" : "Откатить";
-        restore.onclick = () => changeVersion(image, version, version.disabled ? "enable" : "restore");
-        line.append(" ", restore);
-      }
-      const remove = document.createElement("button");
-      remove.className = "danger";
-      remove.textContent = "Удалить";
-      remove.onclick = () => changeVersion(image, version, "delete");
-      line.append(" ", remove);
-      details.append(line);
+    for (const [index, version] of versions.entries()) {
+      const row = document.createElement("tr");
+      const versionCell = cell("", version.missing ? "mac lost" : "mac");
+      const label = version.file + (version.missing ? " · файл не найден"
+        : version.disabled ? " · отключена" : version === current ? " · текущая" : "");
+      if (version.missing) versionCell.textContent = label;
+      else versionCell.append(button(label, "quiet", () => showVersion(image.name, version)));
+      const size = version.size == null ? "—" : (version.size / 2 ** 30)
+        .toLocaleString("ru-RU", { maximumFractionDigits: 2 }) + " ГиБ";
+      const date = version.createdAt == null ? "—" : new Date(version.createdAt * 1000).toLocaleString("ru-RU");
+      row.append(...(index === 0 ? common : [cell(""), cell(""), cell("")]),
+        versionCell, cell(size), cell(date, "when"), index === 0 ? actions : cell("", "actions"));
+      rows.append(row);
     }
-    if (current?.depth > 1) {
-      const merge = document.createElement("button");
-      merge.textContent = "Слить версии";
-      merge.onclick = async () => {
-        if (!window.confirm("Слить версии? Возможность отката пропадёт.")) return;
-        merge.disabled = true;
-        try {
-          await requestJson("/api/images/" + image.id + "/merge", { method: "POST" });
-          await loadImages();
-        } catch (error) {
-          showError(error);
-        } finally {
-          merge.disabled = false;
-        }
-      };
-      details.append(merge);
-    }
-    versions.append(details);
-    row.append(title, versions);
-    rows.append(row);
   }
   byId("images").replaceChildren(rows);
-  byId("imageTable").hidden = images.length === 0;
-  byId("noImages").hidden = images.length !== 0;
-  byId("imageCount").textContent = images.length;
-  document.dispatchEvent(new CustomEvent("images-updated", { detail: images }));
+  byId("imageTable").hidden = catalog.length === 0;
+  byId("noImages").hidden = catalog.length !== 0;
+  byId("imageCount").textContent = catalog.length;
+  byId("imageBadge").textContent = unavailable;
+  byId("imageBadge").hidden = unavailable === 0;
 }
+
+function imageActions(image, current, busy) {
+  const locked = busy ? "образ используется задачей" : "";
+  const items = [];
+  const older = image.versions.filter(version => !version.disabled && version !== current);
+  for (const version of older)
+    items.push({ text: "Откатить к " + version.file, why: locked || (version.missing ? "файл не найден" : ""),
+      run: () => changeVersion(image, version, "restore") });
+  if (!older.length) items.push({ text: "Откатить", why: "нет более старых версий" });
+  for (const version of image.versions.filter(item => item.disabled))
+    items.push({ text: "Вернуть " + version.file, why: locked || (version.missing ? "файл не найден" : ""),
+      run: () => changeVersion(image, version, "enable") });
+  items.push({ text: "Слить версии", why: locked || (current?.missing ? "файлы не найдены"
+    : current?.depth > 1 ? "" : "в цепочке одна версия"),
+    confirm: "Слить версии? Возможность отката пропадёт.",
+    run: () => changeImage(image, "POST", "/merge") }, null);
+  for (const version of image.versions.filter(item => !image.versions.some(newer => newer.parent === item.id)))
+    items.push({ text: "Удалить " + version.file, danger: true, why: locked,
+      run: () => changeVersion(image, version, "delete") });
+  if (!image.versions.length)
+    items.push({ text: "Удалить образ", danger: true, why: locked, confirm: "Удалить образ «" + image.name + "»?",
+      run: () => changeImage(image, "DELETE", "") });
+  return items;
+}
+
+async function changeImage(image, method, suffix) {
+  showError();
+  try {
+    await requestJson("/api/images/" + image.id + suffix, { method });
+    await loadImages();
+  } catch (error) { showError(error); }
+}
+
 
 async function changeVersion(image, version, operation) {
   if (operation === "delete" && !window.confirm("Удалить " + version.file + "?")) return;

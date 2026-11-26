@@ -61,11 +61,8 @@ public sealed class SqliteImageCatalog(CatalogDb db) : IImageCatalog
         var settings = await db.Settings.FindAsync([1], cancellationToken);
         if (settings is null)
             db.Settings.Add(new SettingsRow { Id = 1, ImageRoot = root });
-        else if (!StringComparer.Ordinal.Equals(settings.ImageRoot, root))
-        {
+        else
             settings.ImageRoot = root;
-            await db.Versions.ExecuteDeleteAsync(cancellationToken);
-        }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -158,18 +155,36 @@ public sealed class SqliteImageCatalog(CatalogDb db) : IImageCatalog
         if (!StringComparer.Ordinal.Equals(root, await GetRootAsync(cancellationToken)))
             return false;
 
-        var previous = await db.Versions.AsNoTracking().ToDictionaryAsync(row => row.Id, cancellationToken);
+        var previous = await db.Versions.ToDictionaryAsync(row => row.Id, cancellationToken);
         var retired = (await db.RetiredVersions.Select(row => row.Id).ToListAsync(cancellationToken)).ToHashSet();
-        var aliases = versions.Where(version => previous.ContainsKey(version.VersionId))
-            .GroupBy(version => version.ImageId)
-            .ToDictionary(group => group.Key, group => previous[group.First().VersionId].ImageId);
-        await db.Versions.ExecuteDeleteAsync(cancellationToken);
-        db.Versions.AddRange(versions.Where(version => !retired.Contains(version.VersionId)).Select(version => new VersionRow
+        var empty = await db.EmptyImages.ToListAsync(cancellationToken);
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        foreach (var group in versions.Where(version => !retired.Contains(version.VersionId)).GroupBy(version => version.ImageId))
         {
-            Id = version.VersionId, ImageId = aliases.GetValueOrDefault(version.ImageId, version.ImageId), Name = previous.GetValueOrDefault(version.VersionId)?.Name ?? version.Name,
-            Depth = version.Depth, Layers = JsonSerializer.Serialize(version.Paths),
-            Disabled = previous.TryGetValue(version.VersionId, out var prior) && prior.Disabled
-        }));
+            var known = group.Select(version => previous.GetValueOrDefault(version.VersionId)).FirstOrDefault(row => row is not null);
+            var folder = Path.GetDirectoryName(group.First().Paths[0]);
+            var placeholder = known is null ? empty.FirstOrDefault(row => comparer.Equals(row.Directory, folder)) : null;
+            string imageId = known?.ImageId ?? placeholder?.Id ?? group.Key;
+            foreach (var version in group)
+            {
+                string layers = JsonSerializer.Serialize(version.Paths);
+                if (previous.TryGetValue(version.VersionId, out var row))
+                {
+                    row.Layers = layers;
+                    continue;
+                }
+                db.Versions.Add(new VersionRow
+                {
+                    Id = version.VersionId, ImageId = imageId, Name = placeholder?.Name ?? version.Name,
+                    Depth = version.Depth, Layers = layers
+                });
+            }
+            if (placeholder is not null)
+            {
+                db.EmptyImages.Remove(placeholder);
+                empty.Remove(placeholder);
+            }
+        }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;

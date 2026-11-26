@@ -83,10 +83,11 @@ function hostActions(computer) {
   if (task)
     return [{ text: "Отменить задачу", run: () => cancelTask(task.id) }, null, edit, remove];
 
-  const noImage = image ? "" : "сначала выберите образ";
+  const current = image?.versions.find(item => !item.disabled);
+  const noImage = !image ? "сначала выберите образ" : current?.missing ? "файлы образа недоступны" : "";
   return [
     { text: "Клонировать", why: noImage, run: () => queueTask(computer, "clone") },
-    { text: "Развернуть", why: noImage || (image.versions.some(item => !item.disabled) ? "" : "в образе нет версий"),
+    { text: "Развернуть", why: noImage || (current ? "" : "в образе нет версий"),
       confirm: "Стереть диск " + computer.name + "?", run: () => queueTask(computer, "deploy") },
     { text: "Проверить связь", run: () => queueTask(computer, "agent") },
     { text: "Форматировать в том WB", danger: true, confirm: "Стереть диск " + computer.name + "?",
@@ -172,6 +173,7 @@ form.onsubmit = async event => {
 
 watchEvents("/api/hosts/events", "hosts", data => {
   computers = JSON.parse(data);
+  document.dispatchEvent(new CustomEvent("computers-updated", { detail: computers }));
   draw(computers);
   drawChecks();
   byId("hostsError").hidden = true;
@@ -237,10 +239,10 @@ function drawChecks() {
 watchEvents("/api/link-checks/events", "tasks", data => {
   byId("tasksError").hidden = true;
   checks = JSON.parse(data);
+  document.dispatchEvent(new CustomEvent("tasks-updated", { detail: checks }));
   draw(computers);
   drawChecks();
 }, {
-  active: () => ["", "#pcs", "#tasks"].includes(location.hash),
   onError: () => showTaskError("Связь со списком задач потеряна. Переподключение…")
 });
 

@@ -45,8 +45,7 @@ public sealed class ImagesController(IImageCatalog catalog, ILinkChecks tasks, H
             id = group.Key,
             name = DisplayName(group.First()),
             path = group.First().Name,
-            versions = group.Select(v => new { id = v.VersionId, v.Depth, v.Number, v.Disabled,
-                file = Path.GetFileName(v.Paths[^1]), href = "/api/images/" + group.Key + "?version=" + v.VersionId }).ToArray()
+            versions = group.Select(version => Describe(version, group)).ToArray()
         }).ToArray();
         var empty = await catalog.ListEmptyAsync(ct);
         return Ok(groups.Cast<object>().Concat(empty.Select(image => new
@@ -54,6 +53,31 @@ public sealed class ImagesController(IImageCatalog catalog, ILinkChecks tasks, H
             id = image.Id, name = image.Name, path = image.Directory, versions = Array.Empty<object>()
         })));
     }
+
+    private static object Describe(ImageVersion version, IEnumerable<ImageVersion> group)
+    {
+        var file = new FileInfo(version.Paths[^1]);
+        bool missing = !version.Paths.All(System.IO.File.Exists);
+        long? size = null;
+        long? createdAt = null;
+        try
+        {
+            if (file.Exists)
+            {
+                size = file.Length;
+                createdAt = new DateTimeOffset(file.LastWriteTimeUtc).ToUnixTimeSeconds();
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            missing = true;
+        }
+        string? parent = version.Paths.Length > 1
+            ? group.FirstOrDefault(item => item.Paths[^1] == version.Paths[^2])?.VersionId : null;
+        return new { id = version.VersionId, version.Depth, version.Number, version.Disabled, missing, size, createdAt, parent,
+            file = file.Name, href = "/api/images/" + version.ImageId + "?version=" + version.VersionId };
+    }
+
 
     [HttpPost]
     public async Task<IActionResult> Create(NewImage input, CancellationToken ct)

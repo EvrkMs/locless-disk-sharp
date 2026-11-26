@@ -16,7 +16,7 @@
     <div class="brand">FOGs</div>
     <a href="#pcs" data-page="pcs">ПК<span class="badge" id="foundBadge" hidden></span></a>
     <a href="#tasks" data-page="tasks">Задачи<span class="badge" id="taskBadge" hidden title="Активные задачи"></span></a>
-    <a href="#images" data-page="images">Образы</a>
+    <a href="#images" data-page="images">Образы<span class="badge danger" id="imageBadge" hidden title="Файлы образов не найдены"></span></a>
     <a href="#settings" data-page="settings">Настройки</a>
     <div class="link"><span class="dot off" id="dot"></span><span id="link">подключение…</span></div>
   </nav>
@@ -80,7 +80,7 @@
           <button type="button" id="scan">Сканировать</button>
         </div>
         <table id="imageTable" hidden>
-          <thead><tr><th>Образ</th><th>Версии</th></tr></thead>
+          <thead><tr><th>Образ</th><th>Количество ПК</th><th>Используется задачей</th><th>Версия</th><th>Размер</th><th>Дата</th><th aria-label="Действия"></th></tr></thead>
           <tbody id="images"></tbody>
         </table>
         <div class="empty" id="noImages" hidden>Образов пока нет. Укажите папку в настройках и запустите сканирование.</div>
