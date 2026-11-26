@@ -39,15 +39,14 @@ internal sealed partial class GoAgentEndpoints(
             bool csharp = task.Kind is AgentTaskKind.CSharpProbe or AgentTaskKind.CSharpFormat;
             string agent = csharp ? CSharpAgentFile : GoAgentFile;
             string shell = csharp ? "winpeshl-csharp.ini" : "winpeshl.ini";
-            string[] required = ["wimboot", BootWim, agent];
-            string? missing = required.FirstOrDefault(file => FindFile(efiRoot, file) is null);
+            string? missing = FindMissingBootFile(efiRoot, csharp);
             if (missing is not null)
             {
-                log.LogWarning("Boot check {Task} for {Mac} awaits EFI file {File}", task.Id, key, missing);
+                log.LogWarning("PXE task {Task} ({Kind}) for {Mac} is missing {File}", task.Id, task.Kind, key, missing);
                 return Script(exitScript);
             }
 
-            log.LogInformation("Sending WinPE script for link check {Task}, PC {Mac}", task.Id, key);
+            log.LogInformation("PXE task {Task} ({Kind}) for {Mac} uses {Agent}", task.Id, task.Kind, key, agent);
             return Script($"""
                 kernel {baseUrl}/files/wimboot index=1 || goto disk
                 initrd {baseUrl}/{shell} winpeshl.ini || goto disk
@@ -164,7 +163,13 @@ internal sealed partial class GoAgentEndpoints(
         return true;
     }
 
-    internal static string? FindFile(string efiRoot, string file)
+    internal static string? FindMissingBootFile(string efiRoot, bool csharp)
+    {
+        string[] required = ["wimboot", BootWim, csharp ? CSharpAgentFile : GoAgentFile];
+        return required.FirstOrDefault(file => FindFile(efiRoot, file) is null);
+    }
+
+    private static string? FindFile(string efiRoot, string file)
     {
         string path = efiRoot;
         try

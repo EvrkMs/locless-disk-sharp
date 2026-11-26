@@ -39,16 +39,18 @@ public sealed class LinkChecksController(ILinkChecks tasks, IPxeComputers comput
         if ((input.Kind is AgentTaskKind.Format or AgentTaskKind.CSharpFormat or AgentTaskKind.Deploy) && !input.Confirmed)
             return Problem("Подтвердите запись на диск.", statusCode: 400);
 
-        if (input.Kind is AgentTaskKind.CSharpProbe or AgentTaskKind.CSharpFormat)
+        var options = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
+        var settings = await pxeSettings.ReadAsync(ct);
+        bool builtIn = (settings?.Enabled ?? options.Enabled) &&
+            string.IsNullOrWhiteSpace(settings?.BootScriptUrl ?? options.BootScriptUrl);
+        bool csharp = input.Kind is AgentTaskKind.CSharpProbe or AgentTaskKind.CSharpFormat;
+        if (csharp && !builtIn)
+            return Problem("Для задачи C#-агента включите встроенную загрузку PXE.", statusCode: 409);
+        if (builtIn)
         {
-            var options = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
-            var settings = await pxeSettings.ReadAsync(ct);
-            if (!(settings?.Enabled ?? options.Enabled) ||
-                !string.IsNullOrWhiteSpace(settings?.BootScriptUrl ?? options.BootScriptUrl))
-                return Problem("Для проверки C#-агента включите встроенную загрузку PXE.", statusCode: 409);
             string root = Path.GetFullPath(options.EfiRoot, environment.ContentRootPath);
-            if (GoAgentEndpoints.FindFile(root, GoAgentEndpoints.CSharpAgentFile) is null)
-                return Problem("Поместите LoclessDisk.Agent.exe в папку EFI/agent.", statusCode: 409);
+            if (GoAgentEndpoints.FindMissingBootFile(root, csharp) is { } missing)
+                return Problem("Задача требует загрузки WinPE. В папке EFI отсутствует " + missing + ".", statusCode: 409);
         }
 
         await ImagesController.ScanGate.WaitAsync(ct);
