@@ -52,6 +52,7 @@ public sealed class CatalogDbModelSnapshot : ModelSnapshot
             entity.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("INTEGER");
             entity.Property<bool>("Enabled").HasColumnType("INTEGER");
             entity.Property<string>("BindAddress").HasColumnType("TEXT");
+            entity.Property<string>("BootScriptUrl").HasColumnType("TEXT");
             entity.HasKey("Id");
             entity.ToTable("PxeSettings");
         });

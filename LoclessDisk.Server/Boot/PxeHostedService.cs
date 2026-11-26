@@ -4,7 +4,7 @@ using LoclessDisk.Core;
 
 namespace LoclessDisk.Server.Boot;
 
-internal sealed class PxeOptions
+internal sealed record PxeOptions
 {
     public bool Enabled { get; set; }
     public string? BindAddress { get; set; }
@@ -32,6 +32,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
                 var saved = await scope.ServiceProvider.GetRequiredService<IPxeSettingsStore>()
                     .ReadAsync(stoppingToken);
                 var desired = saved ?? new PxeSettings(options.Enabled, options.BindAddress);
+                desired = desired with { BootScriptUrl = desired.BootScriptUrl ?? options.BootScriptUrl };
                 if (desired == applied)
                     continue;
 
@@ -40,7 +41,8 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
                 if (desired.Enabled)
                 {
                     listenerLifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    listeners = RunPxeAsync(options, desired.BindAddress, listenerLifetime.Token);
+                    listeners = RunPxeAsync(options with { BootScriptUrl = desired.BootScriptUrl! },
+                        desired.BindAddress, listenerLifetime.Token);
                 }
             }
             while (await poll.WaitForNextTickAsync(stoppingToken));
