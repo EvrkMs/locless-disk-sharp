@@ -8,11 +8,15 @@ public sealed class CatalogDb(DbContextOptions<CatalogDb> options) : DbContext(o
 {
     internal DbSet<PxeComputerRow> PxeComputers => Set<PxeComputerRow>();
     internal DbSet<PxeSettingsRow> PxeSettings => Set<PxeSettingsRow>();
+    internal DbSet<LinkCheckRow> LinkChecks => Set<LinkCheckRow>();
     internal DbSet<SettingsRow> Settings => Set<SettingsRow>();
     internal DbSet<VersionRow> Versions => Set<VersionRow>();
 
-    protected override void OnModelCreating(ModelBuilder builder) =>
+    protected override void OnModelCreating(ModelBuilder builder)
+    {
         builder.Entity<PxeComputerRow>().HasKey(row => row.Mac);
+        builder.Entity<LinkCheckRow>().HasIndex(row => row.Mac).IsUnique().HasFilter("\"FinishedAt\" IS NULL");
+    }
 }
 
 internal sealed class SettingsRow

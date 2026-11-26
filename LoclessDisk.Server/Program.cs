@@ -25,10 +25,12 @@ builder.Services.AddDbContext<CatalogDb>(options => options.UseSqlite(connection
 builder.Services.AddScoped<IImageCatalog, SqliteImageCatalog>();
 builder.Services.AddScoped<IPxeSettingsStore, SqlitePxeSettingsStore>();
 builder.Services.AddScoped<IPxeComputers, SqlitePxeComputers>();
+builder.Services.AddScoped<ILinkChecks, SqliteLinkChecks>();
 
 builder.Services.AddControllers();
 builder.Services.AddSingleton<PxeListenerStatus>();
 builder.Services.AddSingleton<HostUpdates>();
+builder.Services.AddSingleton<LinkCheckUpdates>();
 builder.Services.AddHostedService<PxeHostedService>();
 
 var app = builder.Build();

@@ -15,7 +15,7 @@ internal sealed record PxeOptions
     public int HttpPort { get; set; } = 8080;
 }
 
-internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status, HostUpdates hosts,
+internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status, HostUpdates hosts, LinkCheckUpdates tasks,
     ILogger<PxeHostedService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -98,7 +98,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             log.LogWarning(error, "PXE can discover clients, but boot is unavailable");
         }
 
-        var http = root is not null && useBuiltInHttp ? new BootHttpServer(log) : null;
+        var http = root is not null && useBuiltInHttp ? new BootHttpServer(root, scopes, tasks, log) : null;
         var dhcp = new ProxyDhcp(address, options, ObserveAsync, log);
 
         async Task<bool> ObserveAsync(string mac, CancellationToken ct)

@@ -39,6 +39,20 @@ public sealed class CatalogDbModelSnapshot : ModelSnapshot
     protected override void BuildModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
+        modelBuilder.Entity("LoclessDisk.Storage.LinkCheckRow", entity =>
+        {
+            entity.Property<long>("Id").ValueGeneratedOnAdd().HasColumnType("INTEGER");
+            entity.Property<string>("Mac").IsRequired().HasColumnType("TEXT");
+            entity.Property<string>("Status").IsRequired().HasColumnType("TEXT");
+            entity.Property<int>("Percent").HasColumnType("INTEGER");
+            entity.Property<string>("Stage").IsRequired().HasColumnType("TEXT");
+            entity.Property<string>("Message").IsRequired().HasColumnType("TEXT");
+            entity.Property<long>("CreatedAt").HasColumnType("INTEGER");
+            entity.Property<long?>("FinishedAt").HasColumnType("INTEGER");
+            entity.HasKey("Id");
+            entity.HasIndex("Mac").IsUnique().HasFilter("\"FinishedAt\" IS NULL");
+            entity.ToTable("LinkChecks");
+        });
         modelBuilder.Entity("LoclessDisk.Storage.PxeComputerRow", entity =>
         {
             entity.Property<string>("Mac").HasColumnType("TEXT");

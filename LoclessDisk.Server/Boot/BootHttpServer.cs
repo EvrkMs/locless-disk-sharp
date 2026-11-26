@@ -1,9 +1,10 @@
 using System.Net;
-using System.Net.NetworkInformation;
+using LoclessDisk.Server.Boot.GoAgent;
+using LoclessDisk.Server.Events;
 
 namespace LoclessDisk.Server.Boot;
 
-internal sealed class BootHttpServer(ILogger log)
+internal sealed class BootHttpServer(string efiRoot, IServiceScopeFactory scopes, LinkCheckUpdates updates, ILogger log)
 {
     private int listening;
 
@@ -23,17 +24,7 @@ internal sealed class BootHttpServer(ILogger log)
                 builder.Services.AddRouting();
                 await using var app = builder.Build();
 
-                app.MapGet("/boot.ipxe", (HttpContext context) =>
-                {
-                    string mac = context.Request.Query["mac"].ToString();
-                    if (!PhysicalAddress.TryParse(mac.Replace(':', '-'), out var parsed) ||
-                        parsed.GetAddressBytes().Length != 6)
-                        return Results.BadRequest("Invalid MAC address.");
-
-                    log.LogInformation("boot.ipxe requested for {Mac} from {Address}. Continuing to local disk",
-                        parsed, context.Connection.RemoteIpAddress);
-                    return Results.Text("#!ipxe\n" + BootScripts.LocalDisk, "text/plain; charset=utf-8");
-                });
+                new GoAgentEndpoints($"http://{address}:{port}", efiRoot, scopes, updates, log).Map(app);
 
                 await app.StartAsync(ct);
                 Volatile.Write(ref listening, 1);

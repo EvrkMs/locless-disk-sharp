@@ -26,7 +26,7 @@
       <section>
         <div class="head"><h2>Компьютеры</h2></div>
         <table id="hostTable" hidden>
-          <thead><tr><th>Имя</th><th>MAC</th><th>Был в сети</th></tr></thead>
+          <thead><tr><th>Имя</th><th>MAC</th><th>Был в сети</th><th aria-label="Действия"></th></tr></thead>
           <tbody id="hosts"></tbody>
         </table>
         <div class="empty" id="noHosts">Компьютеров пока нет.</div>
@@ -38,6 +38,14 @@
           <tbody id="found"></tbody>
         </table>
         <div class="empty" id="noFound">Здесь появятся новые ПК, когда они запросят загрузку по сети.</div>
+      </section>
+      <section>
+        <div class="head"><h2>Проверки связи</h2></div>
+        <table id="linkCheckTable" hidden>
+          <thead><tr><th>ПК</th><th>Статус</th><th>Прогресс</th><th>Сообщение</th><th aria-label="Действия"></th></tr></thead>
+          <tbody id="linkChecks"></tbody>
+        </table>
+        <div class="empty" id="noLinkChecks">Проверок пока нет.</div>
       </section>
     </div>
     <div class="page" id="page-images">

@@ -24,6 +24,10 @@ public sealed class SqlitePxeComputers(CatalogDb db) : IPxeComputers
         return new PxeObservation(registered, updated > 0);
     }
 
+    public Task<string?> GetRegisteredNameAsync(string mac, CancellationToken cancellationToken) =>
+        db.PxeComputers.Where(row => row.Mac == mac).Select(row => row.Name)
+            .SingleOrDefaultAsync(cancellationToken);
+
     public async Task<IReadOnlyList<PxeComputer>> ListAsync(CancellationToken cancellationToken) =>
         await db.PxeComputers.OrderByDescending(row => row.LastSeen).ThenBy(row => row.Mac)
             .Select(row => new PxeComputer(row.Mac, row.Name, row.LastSeen)).ToListAsync(cancellationToken);
