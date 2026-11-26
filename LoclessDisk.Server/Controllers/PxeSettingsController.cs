@@ -15,7 +15,8 @@ public sealed class PxeSettingsController(IPxeSettingsStore store, IConfiguratio
         var defaults = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
         var settings = await store.ReadAsync(ct) ?? new(defaults.Enabled, defaults.BindAddress);
         return Ok(new { settings.Enabled, settings.BindAddress,
-            bootScriptUrl = settings.BootScriptUrl ?? defaults.BootScriptUrl, interfaces = PxeInterfaces.List(), listenerStatus = listener.Message });
+            bootScriptUrl = settings.BootScriptUrl ?? defaults.BootScriptUrl,
+            exitMode = settings.ExitMode ?? defaults.ExitMode, interfaces = PxeInterfaces.List(), listenerStatus = listener.Message });
     }
 
     [HttpGet("events")]
@@ -27,6 +28,9 @@ public sealed class PxeSettingsController(IPxeSettingsStore store, IConfiguratio
         if ((settings.Enabled && settings.BindAddress is null) ||
             (settings.BindAddress is not null && !PxeInterfaces.List().Any(i => i.Address == settings.BindAddress)))
             return Problem("Выберите IPv4 активного сетевого интерфейса.", statusCode: 400);
+
+        if (settings.ExitMode is not (null or "sanboot" or "exit" or "refind"))
+            return Problem("Неизвестный способ выхода из iPXE.", statusCode: 400);
 
         settings = settings with { BootScriptUrl = settings.BootScriptUrl?.Trim() };
         await store.SaveAsync(settings, ct);

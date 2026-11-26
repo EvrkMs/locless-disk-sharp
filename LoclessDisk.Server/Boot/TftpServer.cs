@@ -7,7 +7,7 @@ using LibraryServer = Tftp.Net.TftpServer;
 
 namespace LoclessDisk.Server.Boot;
 
-internal sealed class TftpServer(string root, string scriptUrl, ILogger log)
+internal sealed class TftpServer(string root, string scriptUrl, string exitScript, ILogger log)
 {
     private const int TransferLimit = 64;
 
@@ -153,7 +153,7 @@ internal sealed class TftpServer(string root, string scriptUrl, ILogger log)
             string url = scriptUrl.Replace("{mac}", "${netX/mac}");
             return new MemoryStream(Encoding.ASCII.GetBytes(
                 "#!ipxe\ndhcp || dhcp || goto disk\nchain " + url +
-                " || goto disk\n:disk\n" + BootScripts.LocalDisk), writable: false);
+                " || goto disk\n:disk\n" + exitScript), writable: false);
         }
 
         string path = root;

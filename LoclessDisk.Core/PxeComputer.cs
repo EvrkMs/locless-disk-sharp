@@ -13,5 +13,8 @@ public interface IPxeComputers
     Task<IReadOnlyList<PxeComputer>> ListAsync(CancellationToken cancellationToken);
     Task<ComputerSaveResult> SaveAsync(string mac, string name, string? imageId, bool create,
         CancellationToken cancellationToken);
+    Task<byte[]?> ReadRecoveryTableAsync(string mac, CancellationToken ct);
+    Task<bool> SaveRecoveryTableAsync(string mac, byte[]? table, CancellationToken ct);
+    Task<bool> RemoveAsync(string mac, bool registered, CancellationToken ct);
     Task<bool> RegisterAsync(string mac, string name, CancellationToken cancellationToken);
 }

@@ -39,13 +39,24 @@ public sealed class CatalogDbModelSnapshot : ModelSnapshot
     protected override void BuildModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
+        modelBuilder.Entity("LoclessDisk.Storage.EmptyImageRow", entity =>
+        {
+            entity.Property<string>("Id").HasColumnType("TEXT");
+            entity.Property<string>("Name").IsRequired().HasColumnType("TEXT");
+            entity.Property<string>("Directory").IsRequired().HasColumnType("TEXT");
+            entity.HasKey("Id");
+            entity.ToTable("EmptyImages");
+        });
         modelBuilder.Entity("LoclessDisk.Storage.LinkCheckRow", entity =>
         {
             entity.Property<long>("Id").ValueGeneratedOnAdd().HasColumnType("INTEGER");
             entity.Property<string>("Mac").IsRequired().HasColumnType("TEXT");
             entity.Property<string>("Status").IsRequired().HasColumnType("TEXT");
+            entity.Property<string>("Kind").IsRequired().HasColumnType("TEXT");
+            entity.Property<string>("ImageId").HasColumnType("TEXT");
             entity.Property<int>("Percent").HasColumnType("INTEGER");
             entity.Property<string>("Stage").IsRequired().HasColumnType("TEXT");
+            entity.Property<string>("Metrics").HasColumnType("TEXT");
             entity.Property<string>("Message").IsRequired().HasColumnType("TEXT");
             entity.Property<long>("CreatedAt").HasColumnType("INTEGER");
             entity.Property<long?>("FinishedAt").HasColumnType("INTEGER");
@@ -59,6 +70,7 @@ public sealed class CatalogDbModelSnapshot : ModelSnapshot
             entity.Property<string>("ImageId").HasColumnType("TEXT");
             entity.Property<string>("Name").HasColumnType("TEXT");
             entity.Property<long>("LastSeen").HasColumnType("INTEGER");
+            entity.Property<byte[]>("RecoveryTable").HasColumnType("BLOB");
             entity.HasKey("Mac");
             entity.ToTable("PxeComputers");
         });
@@ -68,8 +80,15 @@ public sealed class CatalogDbModelSnapshot : ModelSnapshot
             entity.Property<bool>("Enabled").HasColumnType("INTEGER");
             entity.Property<string>("BindAddress").HasColumnType("TEXT");
             entity.Property<string>("BootScriptUrl").HasColumnType("TEXT");
+            entity.Property<string>("ExitMode").HasColumnType("TEXT");
             entity.HasKey("Id");
             entity.ToTable("PxeSettings");
+        });
+        modelBuilder.Entity("LoclessDisk.Storage.RetiredVersionRow", entity =>
+        {
+            entity.Property<string>("Id").HasColumnType("TEXT");
+            entity.HasKey("Id");
+            entity.ToTable("RetiredVersions");
         });
         modelBuilder.Entity("LoclessDisk.Storage.SettingsRow", entity =>
         {
@@ -85,6 +104,7 @@ public sealed class CatalogDbModelSnapshot : ModelSnapshot
             entity.Property<string>("ImageId").IsRequired().HasColumnType("TEXT");
             entity.Property<string>("Layers").IsRequired().HasColumnType("TEXT");
             entity.Property<string>("Name").IsRequired().HasColumnType("TEXT");
+            entity.Property<bool>("Disabled").HasColumnType("INTEGER");
             entity.HasKey("Id");
             entity.ToTable("Versions");
         });

@@ -4,6 +4,7 @@ import { requestJson } from "./lib/http.js";
 const form = document.getElementById("pxeForm");
 const address = document.getElementById("pxeAddress");
 const bootScript = document.getElementById("pxeBootScript");
+const exitMode = document.getElementById("exitMode");
 const enabled = document.getElementById("pxeEnabled");
 const note = document.getElementById("pxeNote");
 const listenerStatus = document.getElementById("pxeListenerStatus");
@@ -19,6 +20,7 @@ try {
   address.value = settings.bindAddress ?? "";
   enabled.checked = settings.enabled;
   bootScript.value = settings.bootScriptUrl ?? "";
+  exitMode.value = settings.exitMode ?? "sanboot";
   listenerStatus.textContent = settings.listenerStatus;
   save.disabled = false;
 } catch (error) {
@@ -32,7 +34,7 @@ form.addEventListener("submit", async event => {
   try {
     const settings = await requestJson("/api/settings/pxe", {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bindAddress: address.value || null, enabled: enabled.checked, bootScriptUrl: bootScript.value })
+      body: JSON.stringify({ bindAddress: address.value || null, enabled: enabled.checked, bootScriptUrl: bootScript.value, exitMode: exitMode.value })
     });
     note.textContent = settings.enabled
       ? "Сохранено. Сервер применит настройку в течение нескольких секунд."

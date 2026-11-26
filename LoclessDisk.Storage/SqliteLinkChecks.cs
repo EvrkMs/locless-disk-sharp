@@ -8,24 +8,27 @@ internal sealed class LinkCheckRow
 {
     public long Id { get; set; }
     public required string Mac { get; set; }
+    public string Kind { get; set; } = AgentTaskKind.Check;
+    public string? ImageId { get; set; }
     public string Status { get; set; } = LinkCheckStatus.Queued;
     public int Percent { get; set; }
     public string Stage { get; set; } = "";
     public string Message { get; set; } = "";
     public long CreatedAt { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     public long? FinishedAt { get; set; }
+    public string? Metrics { get; set; }
 
-    public LinkCheck ToModel() => new(Id, Mac, Status, Percent, Stage, Message, CreatedAt, FinishedAt);
+    public LinkCheck ToModel() => new(Id, Mac, Status, Percent, Stage, Message, CreatedAt, FinishedAt, Kind, ImageId);
 }
 
 public sealed class SqliteLinkChecks(CatalogDb db) : ILinkChecks
 {
-    public async Task<LinkCheck?> QueueAsync(string mac, CancellationToken ct)
+    public async Task<LinkCheck?> QueueAsync(string mac, string kind, string? imageId, CancellationToken ct)
     {
         if (!await db.PxeComputers.AnyAsync(row => row.Mac == mac && row.Name != null, ct))
             return null;
 
-        var task = new LinkCheckRow { Mac = mac };
+        var task = new LinkCheckRow { Mac = mac, Kind = kind, ImageId = imageId };
         db.LinkChecks.Add(task);
         try
         {
@@ -38,6 +41,19 @@ public sealed class SqliteLinkChecks(CatalogDb db) : ILinkChecks
             return null;
         }
     }
+
+    public Task<string?> ReadMetricsAsync(long id, CancellationToken ct) =>
+        db.LinkChecks.Where(row => row.Id == id).Select(row => row.Metrics).SingleOrDefaultAsync(ct);
+
+    public async Task SaveMetricsAsync(long id, string mac, string metrics, CancellationToken ct) =>
+        await db.LinkChecks.Where(row => row.Id == id && row.Mac == mac)
+            .ExecuteUpdateAsync(set => set.SetProperty(row => row.Metrics, metrics), ct);
+
+    public Task<bool> UsesImageAsync(string imageId, CancellationToken ct) =>
+        db.LinkChecks.AnyAsync(task => task.ImageId == imageId && task.FinishedAt == null, ct);
+
+    public async Task<LinkCheck?> FindAsync(long id, CancellationToken ct) =>
+        (await db.LinkChecks.AsNoTracking().FirstOrDefaultAsync(row => row.Id == id, ct))?.ToModel();
 
     public async Task<LinkCheck?> GetActiveAsync(string mac, CancellationToken ct) =>
         (await db.LinkChecks.AsNoTracking().SingleOrDefaultAsync(row => row.Mac == mac && row.FinishedAt == null, ct))

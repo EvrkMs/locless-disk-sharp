@@ -1,5 +1,7 @@
 using System.Text.Json;
 using LoclessDisk.Core;
+using LoclessDisk.Server.Imaging;
+using LoclessDisk.Server.Events;
 using LoclessDisk.Images;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,9 +9,9 @@ namespace LoclessDisk.Server.Controllers;
 
 [ApiController]
 [Route("api/images")]
-public sealed class ImagesController(IImageCatalog catalog, ILogger<ImagesController> logger) : ControllerBase
+public sealed class ImagesController(IImageCatalog catalog, ILinkChecks tasks, HostUpdates hosts, ILogger<ImagesController> logger) : ControllerBase
 {
-    private static readonly SemaphoreSlim ScanGate = new(1);
+    internal static readonly SemaphoreSlim ScanGate = new(1);
 
     [HttpPost("scan")]
     public async Task<IActionResult> Scan([FromBody] JsonElement input, CancellationToken ct)
@@ -36,21 +38,87 @@ public sealed class ImagesController(IImageCatalog catalog, ILogger<ImagesContro
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct) =>
-        Ok((await catalog.ListAsync(ct)).GroupBy(v => v.ImageId).Select(group => new
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        var groups = (await catalog.ListAsync(ct)).GroupBy(v => v.ImageId).Select(group => new
         {
             id = group.Key,
             name = DisplayName(group.First()),
             path = group.First().Name,
-            versions = group.Select(v => new { id = v.VersionId, v.Depth,
-                file = Path.GetFileName(v.Paths[^1]), href = "/api/images/" + group.Key + "?version=" + v.VersionId })
-        }));
+            versions = group.Select(v => new { id = v.VersionId, v.Depth, v.Number, v.Disabled,
+                file = Path.GetFileName(v.Paths[^1]), href = "/api/images/" + group.Key + "?version=" + v.VersionId }).ToArray()
+        }).ToArray();
+        var empty = await catalog.ListEmptyAsync(ct);
+        return Ok(groups.Cast<object>().Concat(empty.Select(image => new
+        {
+            id = image.Id, name = image.Name, path = image.Directory, versions = Array.Empty<object>()
+        })));
+    }
 
-    private static string DisplayName(ImageVersion version)
+    [HttpPost]
+    public async Task<IActionResult> Create(NewImage input, CancellationToken ct)
+    {
+        string name = input.Name?.Trim() ?? "";
+        if (!CloneSessions.IsValidName(name))
+            return Problem("Неверное имя образа.", statusCode: 400);
+
+        await ScanGate.WaitAsync(ct);
+        try
+        {
+            string? root = await catalog.GetRootAsync(ct);
+            if (root is null || !Directory.Exists(root))
+                return Problem("Папка образов недоступна.", statusCode: 409);
+            string directory = Path.Combine(root, name);
+            if (Directory.Exists(directory))
+                return Conflict("Папка с таким именем уже есть.");
+            Directory.CreateDirectory(directory);
+            var image = new EmptyImage(Guid.NewGuid().ToString("N").ToUpperInvariant(), name, directory);
+            if (!await catalog.CreateEmptyAsync(image, ct))
+                return Conflict("Образ уже существует.");
+            return NoContent();
+        }
+        catch (Exception error) when (ImageScanner.IsImageError(error))
+        {
+            logger.LogWarning(error, "Could not create image {Name}", name);
+            return Problem("Не удалось создать образ.", statusCode: 409);
+        }
+        finally { ScanGate.Release(); }
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(string id, CancellationToken ct)
+    {
+        await ScanGate.WaitAsync(ct);
+        try
+        {
+            if (await tasks.UsesImageAsync(id, ct))
+                return Conflict("Образ используется активной задачей.");
+            if ((await catalog.ListAsync(ct)).Any(version => version.ImageId == id))
+                return Conflict("Сначала удалите версии образа.");
+            var image = (await catalog.ListEmptyAsync(ct)).FirstOrDefault(item => item.Id == id);
+            if (image is null || !await catalog.RemoveEmptyAsync(id, ct))
+                return NotFound();
+            try
+            {
+                if (!string.Equals(image.Directory, await catalog.GetRootAsync(ct), StringComparison.OrdinalIgnoreCase))
+                    Directory.Delete(image.Directory);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                logger.LogDebug(error, "Image directory was kept: {Path}", image.Directory);
+            }
+            hosts.Publish();
+            return NoContent();
+        }
+        finally { ScanGate.Release(); }
+    }
+
+    public sealed record NewImage(string? Name);
+    internal static string DisplayName(ImageVersion version)
     {
         string[] parts = version.Name.Split(['/', '\\']);
         string stem = Path.GetFileNameWithoutExtension(parts[^1]);
-        if (!stem.Equals("v1", StringComparison.OrdinalIgnoreCase))
+        if (stem.Length < 2 || (stem[0] is not ('v' or 'V')) || !int.TryParse(stem.AsSpan(1), out _))
             return Path.ChangeExtension(version.Name, null);
         if (parts.Length > 1)
             return string.Join('/', parts[..^1]);
@@ -62,7 +130,7 @@ public sealed class ImagesController(IImageCatalog catalog, ILogger<ImagesContro
     {
         var imageVersion = (await catalog.ListAsync(ct)).FirstOrDefault(v =>
             v.ImageId.Equals(id, StringComparison.OrdinalIgnoreCase) &&
-            (version is null || v.VersionId.Equals(version, StringComparison.OrdinalIgnoreCase)));
+            (version is null ? !v.Disabled : v.VersionId.Equals(version, StringComparison.OrdinalIgnoreCase)));
         if (imageVersion is null)
             return NotFound();
         try

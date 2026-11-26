@@ -7,7 +7,7 @@ namespace LoclessDisk.Server.Controllers;
 
 [ApiController]
 [Route("api/hosts")]
-public sealed class HostsController(IPxeComputers computers, HostUpdates updates) : ControllerBase
+public sealed class HostsController(IPxeComputers computers, ILinkChecks tasks, HostUpdates updates) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct) =>
@@ -40,6 +40,33 @@ public sealed class HostsController(IPxeComputers computers, HostUpdates updates
     [HttpPut("{mac}")]
     public Task<IActionResult> Update(string mac, ComputerInput input, CancellationToken ct) =>
         Save(mac, input, create: false, ct);
+
+    [HttpDelete("{mac}")]
+    public Task<IActionResult> Delete(string mac, CancellationToken ct) => Remove(mac, true, ct);
+
+    [HttpDelete("~/api/discovered/{mac}")]
+    public Task<IActionResult> Hide(string mac, CancellationToken ct) => Remove(mac, false, ct);
+
+    private async Task<IActionResult> Remove(string mac, bool registered, CancellationToken ct)
+    {
+        mac = mac.ToUpperInvariant();
+        if (mac.Length != 12 || !mac.All(Uri.IsHexDigit))
+            return Problem("Неверный MAC-адрес.", statusCode: 400);
+
+        await ImagesController.ScanGate.WaitAsync(ct);
+        try
+        {
+            if (registered && await tasks.GetActiveAsync(mac, ct) is not null)
+                return Conflict("Сначала отмените активную задачу ПК.");
+            if (registered && await computers.ReadRecoveryTableAsync(mac, ct) is not null)
+                return Conflict("Сначала восстановите размер тома через «Проверить связь».");
+            if (!await computers.RemoveAsync(mac, registered, ct))
+                return NotFound();
+            updates.Publish();
+            return NoContent();
+        }
+        finally { ImagesController.ScanGate.Release(); }
+    }
 
     private async Task<IActionResult> Save(string? mac, ComputerInput input, bool create, CancellationToken ct)
     {

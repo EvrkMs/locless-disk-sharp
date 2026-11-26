@@ -119,6 +119,67 @@ public sealed class ImageChain : IDisposable
         return new(BlockKind.Data, length);
     }
 
+    internal byte[][] LayerIds() => layers.Select(layer => layer.Header.AsSpan(12, 16).ToArray()).ToArray();
+    internal byte[] TipDigest() => layers[^1].Digest.ToArray();
+    internal IEnumerable<(byte[] Hash, ushort Level, long Offset)> StoredLocations() =>
+        entries.Values.Where(entry => entry.Hash.AsSpan().IndexOfAnyExcept((byte)0) >= 0)
+            .Select(entry => (entry.Hash, entry.Level, entry.Offset));
+
+    public (uint Partition, uint Position)[] IndexedBlocks() =>
+        entries.Keys.OrderBy(key => key.Item1).ThenBy(key => key.Item2).ToArray();
+
+    public byte[] BuildDeployIndex(IReadOnlyList<(uint Partition, uint Position)> blocks)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        var result = new byte[checked(blocks.Count * 40)];
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            var key = blocks[i];
+            var record = result.AsSpan(i * 40, 40);
+            WriteUInt32LittleEndian(record, key.Partition);
+            WriteUInt32LittleEndian(record[4..], key.Position);
+            entries[key].Hash.CopyTo(record[8..]);
+        }
+        return result;
+    }
+
+    public async Task WriteStoredBlockAsync((uint Partition, uint Position) key, Stream target,
+        CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (!entries.TryGetValue(key, out var entry) || entry.Hash.AsSpan().IndexOfAnyExcept((byte)0) < 0)
+            throw new InvalidDataException("The entry has no stored block.");
+
+        Layer layer = layers[entry.Level];
+        var header = new byte[BlockHeaderSize];
+        await ReadExactlyAsync(layer.Handle, header, entry.Offset, ct);
+        uint size = ReadUInt32LittleEndian(header);
+        uint raw = ReadUInt32LittleEndian(header.AsSpan(4));
+        ushort codec = ReadUInt16LittleEndian(header.AsSpan(8));
+        if (size == 0 || size > BlockSize || size > layer.IndexOffset - entry.Offset - BlockHeaderSize ||
+            raw == 0 || raw > BlockSize || codec > 1 || (codec == 0 && size != raw) ||
+            !header.AsSpan(12, 32).SequenceEqual(entry.Hash))
+            throw new InvalidDataException("Invalid stored block header.");
+
+        byte[] payload = System.Buffers.ArrayPool<byte>.Shared.Rent((int)size);
+        try
+        {
+            var data = payload.AsMemory(0, (int)size);
+            await ReadExactlyAsync(layer.Handle, data, entry.Offset + BlockHeaderSize, ct);
+            var crc = new Crc32();
+            crc.Append(header.AsSpan(0, 44));
+            crc.Append(data.Span);
+            if (crc.GetCurrentHashAsUInt32() != ReadUInt32LittleEndian(header.AsSpan(44)))
+                throw new InvalidDataException("Block CRC mismatch.");
+            await target.WriteAsync(header, ct);
+            await target.WriteAsync(data, ct);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(payload);
+        }
+    }
+
     private static async Task<Layer> OpenLayerAsync(string path, CancellationToken cancellationToken)
     {
         var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read,

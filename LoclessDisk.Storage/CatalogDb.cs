@@ -10,6 +10,8 @@ public sealed class CatalogDb(DbContextOptions<CatalogDb> options) : DbContext(o
     internal DbSet<PxeSettingsRow> PxeSettings => Set<PxeSettingsRow>();
     internal DbSet<LinkCheckRow> LinkChecks => Set<LinkCheckRow>();
     internal DbSet<SettingsRow> Settings => Set<SettingsRow>();
+    internal DbSet<EmptyImageRow> EmptyImages => Set<EmptyImageRow>();
+    internal DbSet<RetiredVersionRow> RetiredVersions => Set<RetiredVersionRow>();
     internal DbSet<VersionRow> Versions => Set<VersionRow>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -32,6 +34,19 @@ internal sealed class VersionRow
     public required string Name { get; set; }
     public int Depth { get; set; }
     public required string Layers { get; set; }
+    public bool Disabled { get; set; }
+}
+
+internal sealed class EmptyImageRow
+{
+    public required string Id { get; set; }
+    public required string Name { get; set; }
+    public required string Directory { get; set; }
+}
+
+internal sealed class RetiredVersionRow
+{
+    public required string Id { get; set; }
 }
 
 public sealed class SqliteImageCatalog(CatalogDb db) : IImageCatalog
@@ -60,7 +75,80 @@ public sealed class SqliteImageCatalog(CatalogDb db) : IImageCatalog
         var rows = await db.Versions.AsNoTracking().OrderBy(row => row.Name)
             .ThenByDescending(row => row.Depth).ThenBy(row => row.Id).ToListAsync(cancellationToken);
         return rows.Select(row => new ImageVersion(row.ImageId, row.Id, row.Name,
-            row.Depth, JsonSerializer.Deserialize<string[]>(row.Layers)!)).ToArray();
+            row.Depth, JsonSerializer.Deserialize<string[]>(row.Layers)!, row.Disabled))
+            .OrderBy(row => row.Name).ThenByDescending(row => row.Number).ThenBy(row => row.VersionId).ToArray();
+    }
+
+    public async Task<IReadOnlyList<EmptyImage>> ListEmptyAsync(CancellationToken ct) =>
+        await db.EmptyImages.OrderBy(row => row.Name)
+            .Select(row => new EmptyImage(row.Id, row.Name, row.Directory)).ToListAsync(ct);
+
+    public async Task<bool> CreateEmptyAsync(EmptyImage image, CancellationToken ct) =>
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "EmptyImages" ("Id", "Name", "Directory") VALUES ({image.Id}, {image.Name}, {image.Directory})
+            ON CONFLICT ("Id") DO NOTHING
+            """, ct) == 1;
+
+    public async Task<bool> RemoveEmptyAsync(string id, CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        if (await db.EmptyImages.Where(row => row.Id == id).ExecuteDeleteAsync(ct) == 0)
+            return false;
+        await db.PxeComputers.Where(row => row.ImageId == id)
+            .ExecuteUpdateAsync(update => update.SetProperty(row => row.ImageId, (string?)null), ct);
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    public async Task SelectVersionsAsync(string imageId, IReadOnlyList<string> active, CancellationToken ct)
+    {
+        string[] ids = active.ToArray();
+        await db.Versions.Where(row => row.ImageId == imageId)
+            .ExecuteUpdateAsync(update => update.SetProperty(row => row.Disabled, row => !ids.Contains(row.Id)), ct);
+    }
+
+    public async Task ReplaceImageAsync(string root, ImageVersion merged, IReadOnlyList<ImageVersion> previous,
+        CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        if (!StringComparer.Ordinal.Equals(root, await GetRootAsync(ct)))
+            throw new InvalidOperationException("Image root changed during merge.");
+
+        await db.Versions.Where(row => row.ImageId == merged.ImageId).ExecuteDeleteAsync(ct);
+        db.RetiredVersions.AddRange(previous.Select(item => new RetiredVersionRow { Id = item.VersionId }));
+        db.Versions.Add(new VersionRow
+        {
+            Id = merged.VersionId, ImageId = merged.ImageId, Name = merged.Name,
+            Depth = merged.Depth, Layers = JsonSerializer.Serialize(merged.Paths)
+        });
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    public async Task RemoveVersionAsync(string versionId, EmptyImage? remainingImage, CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.Versions.Where(row => row.Id == versionId).ExecuteDeleteAsync(ct);
+        if (remainingImage is not null && !await CreateEmptyAsync(remainingImage, ct))
+            throw new InvalidOperationException("Image already exists.");
+        await transaction.CommitAsync(ct);
+    }
+
+    public async Task<bool> AddVersionAsync(string root, ImageVersion version, CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        if (!StringComparer.Ordinal.Equals(root, await GetRootAsync(ct)))
+            return false;
+
+        string layers = JsonSerializer.Serialize(version.Paths);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Versions" ("Id", "ImageId", "Name", "Depth", "Layers", "Disabled")
+            VALUES ({version.VersionId}, {version.ImageId}, {version.Name}, {version.Depth}, {layers}, 0)
+            ON CONFLICT ("Id") DO NOTHING
+            """, ct);
+        await db.EmptyImages.Where(row => row.Id == version.ImageId).ExecuteDeleteAsync(ct);
+        await transaction.CommitAsync(ct);
+        return true;
     }
 
     public async Task<bool> ReplaceAsync(string root, IReadOnlyList<ImageVersion> versions,
@@ -70,11 +158,17 @@ public sealed class SqliteImageCatalog(CatalogDb db) : IImageCatalog
         if (!StringComparer.Ordinal.Equals(root, await GetRootAsync(cancellationToken)))
             return false;
 
+        var previous = await db.Versions.AsNoTracking().ToDictionaryAsync(row => row.Id, cancellationToken);
+        var retired = (await db.RetiredVersions.Select(row => row.Id).ToListAsync(cancellationToken)).ToHashSet();
+        var aliases = versions.Where(version => previous.ContainsKey(version.VersionId))
+            .GroupBy(version => version.ImageId)
+            .ToDictionary(group => group.Key, group => previous[group.First().VersionId].ImageId);
         await db.Versions.ExecuteDeleteAsync(cancellationToken);
-        db.Versions.AddRange(versions.Select(version => new VersionRow
+        db.Versions.AddRange(versions.Where(version => !retired.Contains(version.VersionId)).Select(version => new VersionRow
         {
-            Id = version.VersionId, ImageId = version.ImageId, Name = version.Name,
-            Depth = version.Depth, Layers = JsonSerializer.Serialize(version.Paths)
+            Id = version.VersionId, ImageId = aliases.GetValueOrDefault(version.ImageId, version.ImageId), Name = previous.GetValueOrDefault(version.VersionId)?.Name ?? version.Name,
+            Depth = version.Depth, Layers = JsonSerializer.Serialize(version.Paths),
+            Disabled = previous.TryGetValue(version.VersionId, out var prior) && prior.Disabled
         }));
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

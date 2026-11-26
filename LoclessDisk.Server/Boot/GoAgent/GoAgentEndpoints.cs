@@ -1,3 +1,4 @@
+using LoclessDisk.Server.Imaging;
 using System.Net.NetworkInformation;
 using System.Text.Json;
 using LoclessDisk.Core;
@@ -6,8 +7,8 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace LoclessDisk.Server.Boot.GoAgent;
 
-internal sealed class GoAgentEndpoints(
-    string baseUrl, string efiRoot, IServiceScopeFactory scopes, LinkCheckUpdates updates, ILogger log)
+internal sealed partial class GoAgentEndpoints(
+    string baseUrl, string efiRoot, string exitScript, IServiceScopeFactory scopes, LinkCheckUpdates updates, DeploySessions deployments, CloneSessions clones, ILogger log)
 {
     private const string ConfigFile = "fogs-agent.json";
     private const string Shell =
@@ -15,8 +16,8 @@ internal sealed class GoAgentEndpoints(
 
     private static readonly string[] BootFiles = ["wimboot", "WinPE/boot.wim", "agent/partclone.exe"];
 
-    private sealed record ProgressReport(string? Mac, int Percent, string? Stage, string? Message);
-    private sealed record FinishReport(string? Mac, bool Ok, string? Message);
+    private sealed record ProgressReport(string? Mac, int Percent, string? Stage, string? Message, JsonElement? Metrics);
+    private sealed record FinishReport(string? Mac, bool Ok, string? Message, JsonElement? Metrics);
 
     public void Map(WebApplication app)
     {
@@ -29,13 +30,13 @@ internal sealed class GoAgentEndpoints(
             var tasks = scope.ServiceProvider.GetRequiredService<ILinkChecks>();
             var task = await tasks.GetActiveAsync(key, ct);
             if (task is null)
-                return Script(BootScripts.LocalDisk);
+                return Script(exitScript);
 
             string? missing = BootFiles.FirstOrDefault(file => FindFile(file) is null);
             if (missing is not null)
             {
                 log.LogWarning("Boot check {Task} for {Mac} awaits EFI file {File}", task.Id, key, missing);
-                return Script(BootScripts.LocalDisk);
+                return Script(exitScript);
             }
 
             log.LogInformation("Sending WinPE script for link check {Task}, PC {Mac}", task.Id, key);
@@ -47,11 +48,11 @@ internal sealed class GoAgentEndpoints(
                 initrd {baseUrl}/files/WinPE/boot.wim boot.wim || goto disk
                 boot || goto disk
                 :disk
-                """ + "\n" + BootScripts.LocalDisk);
+                """ + "\n" + exitScript);
         });
 
         app.MapGet("/winpeshl.ini", () => Results.Text(Shell, "text/plain"));
-        foreach (string file in BootFiles)
+        foreach (string file in BootFiles.Append("refind.efi"))
         {
             app.MapMethods("/files/" + file, ["GET", "HEAD"], () =>
             {
@@ -80,7 +81,20 @@ internal sealed class GoAgentEndpoints(
             await using var scope = scopes.CreateAsyncScope();
             var tasks = scope.ServiceProvider.GetRequiredService<ILinkChecks>();
             var task = await tasks.GetActiveAsync(key, ct);
-            return task is null ? Results.NoContent() : Results.Json(new { id = task.Id, kind = "agent" });
+            if (task is null)
+                return Results.NoContent();
+            var computers = scope.ServiceProvider.GetRequiredService<IPxeComputers>();
+            byte[]? table = task.Kind == AgentTaskKind.Format ? null : await computers.ReadRecoveryTableAsync(key, ct);
+            string? imageName = task.ImageId;
+            if (imageName?.StartsWith("new:", StringComparison.Ordinal) == true)
+                imageName = imageName[4..];
+            else if (imageName is not null)
+            {
+                var catalog = scope.ServiceProvider.GetRequiredService<IImageCatalog>();
+                imageName = (await catalog.ListEmptyAsync(ct)).FirstOrDefault(image => image.Id == task.ImageId)?.Name ??
+                    (await catalog.ListAsync(ct)).FirstOrDefault(version => version.ImageId == task.ImageId)?.Name;
+            }
+            return Results.Json(new { id = task.Id, kind = task.Kind, image = imageName ?? "", table });
         });
 
         app.MapPost("/agent/tasks/{id:long}/progress", async (long id, HttpContext context, CancellationToken ct) =>
@@ -91,6 +105,7 @@ internal sealed class GoAgentEndpoints(
 
             await using var scope = scopes.CreateAsyncScope();
             var tasks = scope.ServiceProvider.GetRequiredService<ILinkChecks>();
+            await SaveMetricsAsync(tasks, id, mac, input.Metrics, ct);
             if (!await tasks.ReportAsync(id, mac, input.Percent, Clip(input.Stage), Clip(input.Message), ct))
                 return Results.StatusCode(StatusCodes.Status410Gone);
             updates.Publish();
@@ -105,11 +120,22 @@ internal sealed class GoAgentEndpoints(
 
             await using var scope = scopes.CreateAsyncScope();
             var tasks = scope.ServiceProvider.GetRequiredService<ILinkChecks>();
+            await SaveMetricsAsync(tasks, id, mac, input.Metrics, ct);
             if (!await tasks.FinishAsync(id, mac, input.Ok, Clip(input.Message), ct))
                 return Results.StatusCode(StatusCodes.Status410Gone);
+            await deployments.AbortAsync(id);
+            await clones.AbortAsync(id);
             updates.Publish();
             return Results.NoContent();
         });
+        MapImageRoutes(app);
+    }
+
+    private static Task SaveMetricsAsync(ILinkChecks tasks, long id, string mac, JsonElement? metrics,
+        CancellationToken ct)
+    {
+        return metrics is { ValueKind: JsonValueKind.Object } report
+            ? tasks.SaveMetricsAsync(id, mac, report.GetRawText(), ct) : Task.CompletedTask;
     }
 
     private static IResult Script(string body) =>

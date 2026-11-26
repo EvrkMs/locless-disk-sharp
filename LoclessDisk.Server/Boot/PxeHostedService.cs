@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using LoclessDisk.Core;
 using LoclessDisk.Server.Events;
+using LoclessDisk.Server.Imaging;
 
 namespace LoclessDisk.Server.Boot;
 
@@ -12,10 +13,11 @@ internal sealed record PxeOptions
     public string EfiRoot { get; set; } = "EFI";
     public string BootFile { get; set; } = "ipxe-shim.efi";
     public string BootScriptUrl { get; set; } = "";
+    public string ExitMode { get; set; } = "sanboot";
     public int HttpPort { get; set; } = 8080;
 }
 
-internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status, HostUpdates hosts, LinkCheckUpdates tasks,
+internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status, HostUpdates hosts, LinkCheckUpdates tasks, DeploySessions deployments, CloneSessions clones,
     ILogger<PxeHostedService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -34,7 +36,11 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
                 var saved = await scope.ServiceProvider.GetRequiredService<IPxeSettingsStore>()
                     .ReadAsync(stoppingToken);
                 var desired = saved ?? new PxeSettings(options.Enabled, options.BindAddress);
-                desired = desired with { BootScriptUrl = desired.BootScriptUrl ?? options.BootScriptUrl };
+                desired = desired with
+                {
+                    BootScriptUrl = desired.BootScriptUrl ?? options.BootScriptUrl,
+                    ExitMode = desired.ExitMode ?? options.ExitMode
+                };
                 if (desired == applied)
                     continue;
 
@@ -44,7 +50,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
                 if (desired.Enabled)
                 {
                     listenerLifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    listeners = RunPxeAsync(options with { BootScriptUrl = desired.BootScriptUrl! },
+                    listeners = RunPxeAsync(options with { BootScriptUrl = desired.BootScriptUrl!, ExitMode = desired.ExitMode! },
                         desired.BindAddress, listenerLifetime.Token);
                 }
             }
@@ -98,7 +104,9 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             log.LogWarning(error, "PXE can discover clients, but boot is unavailable");
         }
 
-        var http = root is not null && useBuiltInHttp ? new BootHttpServer(root, scopes, tasks, log) : null;
+        string exitScript = BootScripts.Leave(options.ExitMode, $"http://{address}:{options.HttpPort}");
+        var http = root is not null && useBuiltInHttp
+            ? new BootHttpServer(root, exitScript, scopes, tasks, deployments, clones, log) : null;
         var dhcp = new ProxyDhcp(address, options, ObserveAsync, log);
 
         async Task<bool> ObserveAsync(string mac, CancellationToken ct)
@@ -129,7 +137,7 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
                 return false;
             }
         }
-        var tftp = root is null ? null : new TftpServer(root, options.BootScriptUrl, log);
+        var tftp = root is null ? null : new TftpServer(root, options.BootScriptUrl, exitScript, log);
         try
         {
             await Task.WhenAll(

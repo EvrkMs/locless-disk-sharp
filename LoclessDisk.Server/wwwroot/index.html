@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/css/panel.css">
   <script type="module" src="/js/settings.js"></script>
   <script type="module" src="/js/hosts.js"></script>
+  <script type="module" src="/js/scenario.js"></script>
   <script type="module" src="/js/pxe-settings.js"></script>
 </head>
 <body>
@@ -14,7 +15,7 @@
   <nav class="side" aria-label="Разделы">
     <div class="brand">FOGs</div>
     <a href="#pcs" data-page="pcs">ПК<span class="badge" id="foundBadge" hidden></span></a>
-    <a href="#tasks" data-page="tasks">Задачи</a>
+    <a href="#tasks" data-page="tasks">Задачи<span class="badge" id="taskBadge" hidden title="Активные задачи"></span></a>
     <a href="#images" data-page="images">Образы</a>
     <a href="#settings" data-page="settings">Настройки</a>
     <div class="link"><span class="dot off" id="dot"></span><span id="link">подключение…</span></div>
@@ -25,9 +26,9 @@
       <h1>ПК</h1>
       <div id="hostsError" class="alert" role="alert" hidden></div>
       <section>
-        <div class="head"><h2>Компьютеры</h2><button type="button" class="main" id="addHost">Добавить ПК</button></div>
-        <table id="hostTable" hidden>
-          <thead><tr><th>Имя</th><th>MAC</th><th>Образ</th><th>Был в сети</th><th aria-label="Действия"></th></tr></thead>
+        <div class="head"><h2>Компьютеры <span class="count" id="hostCount"></span></h2><button type="button" class="main" id="addHost">Добавить ПК</button></div>
+        <table id="hostTable" class="cols" hidden>
+          <thead><tr><th>Имя</th><th>MAC</th><th>Образ</th><th class="hide-sm">Был в сети</th><th>Задача</th><th>Статус</th><th class="hide-sm">Этап</th><th>Прогресс</th><th class="hide-sm">Результат</th><th class="hide-sm">Завершена</th><th aria-label="Действия"></th></tr></thead>
           <tbody id="hosts"></tbody>
         </table>
         <div class="empty" id="noHosts">Компьютеров пока нет.</div>
@@ -45,12 +46,30 @@
       <h1>Задачи</h1>
       <div id="tasksError" class="alert" role="alert" hidden></div>
       <section>
-        <div class="head"><h2>Проверки связи</h2></div>
-        <table id="linkCheckTable" hidden>
-          <thead><tr><th>ПК</th><th>Статус</th><th>Прогресс</th><th>Сообщение</th><th aria-label="Действия"></th></tr></thead>
+        <div class="head"><h2>Выполняются <span class="count" id="activeCount"></span></h2></div>
+        <table id="linkCheckTable" class="cols" hidden>
+          <thead><tr><th>ПК</th><th>Задача</th><th>Образ</th><th>Статус</th><th class="hide-sm">Этап</th><th>Прогресс</th><th class="hide-sm">Сообщение</th><th class="hide-sm">Создана</th><th aria-label="Действия"></th></tr></thead>
           <tbody id="linkChecks"></tbody>
         </table>
-        <div class="empty" id="noLinkChecks">Проверок пока нет.</div>
+        <div class="empty" id="noLinkChecks">Сейчас задач нет. Запустите задачу в разделе «ПК».</div>
+      </section>
+      <section>
+        <div class="head"><h2>История <span class="count" id="doneCount"></span></h2><button type="button" id="onlyErrors" aria-pressed="false">Только ошибки</button></div>
+        <table id="finishedTable" class="cols" hidden>
+          <thead><tr><th>ПК</th><th>Задача</th><th>Образ</th><th>Статус</th><th>Сообщение</th><th class="hide-sm">Создана</th><th>Завершена</th><th aria-label="Метрики"></th></tr></thead>
+          <tbody id="finishedTasks"></tbody>
+        </table>
+        <div class="empty" id="noFinishedTasks">Завершённых задач нет.</div>
+      </section>
+      <section id="devSection" hidden>
+        <div class="head"><h2>Сценарий замера</h2></div>
+        <p class="scenario-note">Развёртывание, дельта-клон, затем полный клон. Диск тестового ПК будет стёрт.</p>
+        <form id="scenarioForm">
+          <select id="scenarioHost" aria-label="Компьютер для замера" required></select>
+          <button type="submit" id="scenarioStart">Запустить</button>
+          <button type="button" id="scenarioStop" hidden>Остановить</button>
+        </form>
+        <div id="scenarioRuns"></div>
       </section>
     </div>
     <div class="page" id="page-images" hidden>
@@ -61,10 +80,14 @@
           <button type="button" id="scan">Сканировать</button>
         </div>
         <table id="imageTable" hidden>
-          <thead><tr><th>Образ</th><th>Версия</th><th>Слоёв</th><th aria-label="Действия"></th></tr></thead>
+          <thead><tr><th>Образ</th><th>Версии</th></tr></thead>
           <tbody id="images"></tbody>
         </table>
         <div class="empty" id="noImages" hidden>Образов пока нет. Укажите папку в настройках и запустите сканирование.</div>
+        <form id="imageForm">
+          <input id="newImage" placeholder="win11-club" aria-label="Имя образа" maxlength="64" required>
+          <button type="submit">Создать образ</button>
+        </form>
         <div class="field" id="scanResult" role="status" hidden></div>
       </section>
     </div>
@@ -94,11 +117,22 @@
           <div class="row"><input id="pxeBootScript" placeholder="По умолчанию — встроенный HTTP на выбранном IPv4"></div>
           <p id="pxeNote" role="status">На сервере с CCBoot оставьте службы выключенными.</p>
           <p id="pxeListenerStatus"></p>
+          <label for="exitMode">Загрузка с диска, когда задачи нет</label>
+          <select id="exitMode">
+            <option value="sanboot">sanboot: iPXE находит загрузчик Windows</option>
+            <option value="exit">exit: вернуть управление прошивке</option>
+            <option value="refind">rEFInd: файл refind.efi в каталоге загрузки</option>
+          </select>
         </form>
       </section>
     </div>
   </main>
 </div>
+<dialog id="metricsDialog" class="wide" aria-labelledby="metricsTitle">
+  <h2 id="metricsTitle">Метрики</h2>
+  <div class="metrics" id="metricsBody"></div>
+  <form method="dialog"><div class="buttons"><button>Закрыть</button></div></form>
+</dialog>
 <dialog id="imageDialog" class="wide" aria-labelledby="imageTitle">
   <h2 id="imageTitle"></h2>
   <div class="metrics" id="imageDetails"></div>

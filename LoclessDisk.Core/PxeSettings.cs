@@ -1,6 +1,6 @@
 namespace LoclessDisk.Core;
 
-public sealed record PxeSettings(bool Enabled, string? BindAddress, string? BootScriptUrl = null);
+public sealed record PxeSettings(bool Enabled, string? BindAddress, string? BootScriptUrl = null, string? ExitMode = null);
 
 public interface IPxeSettingsStore
 {

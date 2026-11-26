@@ -59,23 +59,73 @@ async function loadImages() {
   const images = await requestJson("/api/images");
   const rows = document.createDocumentFragment();
   for (const image of images) {
-    for (const [index, version] of [...image.versions].reverse().entries()) {
-      const row = document.createElement("tr");
-      const action = cell("", "actions");
-      const button = document.createElement("button");
-      button.textContent = "Подробнее";
-      button.addEventListener("click", () => showVersion(image.name, version));
-      action.append(button);
-      if (index === 0) {
-        const title = cell(image.name, "name");
-        title.rowSpan = image.versions.length;
-        title.title = image.path;
-        row.append(title);
-      }
-      const kind = version.depth === 1 ? "полный" : "дельта";
-      row.append(cell(version.file + " · " + kind, "mac"), cell(version.depth), action);
+    const row = document.createElement("tr");
+    const title = cell(image.name, "name");
+    title.title = image.path;
+    const versions = cell("");
+    if (!image.versions.length) {
+      versions.textContent = "Версий пока нет. Клонируйте эталон.";
+      const remove = document.createElement("button");
+      remove.className = "danger";
+      remove.textContent = "Удалить";
+      remove.onclick = async () => {
+        if (!window.confirm("Удалить образ «" + image.name + "»?")) return;
+        try {
+          await requestJson("/api/images/" + image.id, { method: "DELETE" });
+          await loadImages();
+        } catch (error) { showError(error); }
+      };
+      versions.append(" ", remove);
+      row.append(title, versions);
       rows.append(row);
+      continue;
     }
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    const current = image.versions.find(version => !version.disabled);
+    summary.textContent = image.versions.length + (current ? " · " + current.file : "");
+    details.append(summary);
+    for (const version of [...image.versions].reverse()) {
+      const button = document.createElement("button");
+      button.textContent = version.file + (version.depth === 1 ? " · полный" : " · дельта");
+      button.onclick = () => showVersion(image.name, version);
+      const line = document.createElement("div");
+      line.className = "sub";
+      line.append(button);
+      if (version === current) line.append(" · текущая");
+      if (version.disabled || (current && version.number < current.number)) {
+        const restore = document.createElement("button");
+        restore.textContent = version.disabled ? "Вернуть" : "Откатить";
+        restore.onclick = () => changeVersion(image, version, version.disabled ? "enable" : "restore");
+        line.append(" ", restore);
+      }
+      const remove = document.createElement("button");
+      remove.className = "danger";
+      remove.textContent = "Удалить";
+      remove.onclick = () => changeVersion(image, version, "delete");
+      line.append(" ", remove);
+      details.append(line);
+    }
+    if (current?.depth > 1) {
+      const merge = document.createElement("button");
+      merge.textContent = "Слить версии";
+      merge.onclick = async () => {
+        if (!window.confirm("Слить версии? Возможность отката пропадёт.")) return;
+        merge.disabled = true;
+        try {
+          await requestJson("/api/images/" + image.id + "/merge", { method: "POST" });
+          await loadImages();
+        } catch (error) {
+          showError(error);
+        } finally {
+          merge.disabled = false;
+        }
+      };
+      details.append(merge);
+    }
+    versions.append(details);
+    row.append(title, versions);
+    rows.append(row);
   }
   byId("images").replaceChildren(rows);
   byId("imageTable").hidden = images.length === 0;
@@ -84,6 +134,31 @@ async function loadImages() {
   document.dispatchEvent(new CustomEvent("images-updated", { detail: images }));
 }
 
+async function changeVersion(image, version, operation) {
+  if (operation === "delete" && !window.confirm("Удалить " + version.file + "?")) return;
+  if (operation === "restore" && !window.confirm("Развёртывание пойдёт с " + version.file + ". Откатить?")) return;
+  showError();
+  try {
+    const path = "/api/images/" + image.id + "/versions/" + version.id;
+    await requestJson(operation === "delete" ? path : path + "/" + operation,
+      { method: operation === "delete" ? "DELETE" : "POST" });
+    await loadImages();
+  } catch (error) {
+    showError(error);
+  }
+}
+byId("imageForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  showError();
+  try {
+    await requestJson("/api/images", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: byId("newImage").value })
+    });
+    event.target.reset();
+    await loadImages();
+  } catch (error) { showError(error); }
+});
 settingsForm.addEventListener("submit", async event => {
   event.preventDefault();
   showError();
@@ -129,7 +204,10 @@ scanButton.addEventListener("click", async () => {
   }
 });
 
-window.addEventListener("hashchange", route);
+window.addEventListener("hashchange", () => {
+  route();
+  if (location.hash === "#images") loadImages().catch(showError);
+});
 route();
 try {
   const settings = await requestJson("/api/settings");

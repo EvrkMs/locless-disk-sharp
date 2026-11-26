@@ -8,6 +8,7 @@ internal sealed class PxeComputerRow
     public required string Mac { get; set; }
     public string? Name { get; set; }
     public string? ImageId { get; set; }
+    public byte[]? RecoveryTable { get; set; }
     public long LastSeen { get; set; }
 }
 
@@ -38,6 +39,7 @@ public sealed class SqlitePxeComputers(CatalogDb db) : IPxeComputers
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         if (imageId is not null && !await db.Versions.AnyAsync(row => row.ImageId == imageId, ct) &&
+            !await db.EmptyImages.AnyAsync(row => row.Id == imageId, ct) &&
             !await db.PxeComputers.AnyAsync(row => row.Mac == mac && row.ImageId == imageId, ct))
             return ComputerSaveResult.ImageNotFound;
 
@@ -61,6 +63,17 @@ public sealed class SqlitePxeComputers(CatalogDb db) : IPxeComputers
         await transaction.CommitAsync(ct);
         return updated == 1 ? ComputerSaveResult.Saved : ComputerSaveResult.Conflict;
     }
+
+    public Task<byte[]?> ReadRecoveryTableAsync(string mac, CancellationToken ct) =>
+        db.PxeComputers.Where(row => row.Mac == mac).Select(row => row.RecoveryTable).SingleOrDefaultAsync(ct);
+
+    public async Task<bool> SaveRecoveryTableAsync(string mac, byte[]? table, CancellationToken ct) =>
+        await db.PxeComputers.Where(row => row.Mac == mac && row.Name != null)
+            .ExecuteUpdateAsync(update => update.SetProperty(row => row.RecoveryTable, table), ct) == 1;
+
+    public async Task<bool> RemoveAsync(string mac, bool registered, CancellationToken ct) =>
+        await db.PxeComputers.Where(row => row.Mac == mac && (row.Name != null) == registered)
+            .ExecuteDeleteAsync(ct) != 0;
 
     public async Task<bool> RegisterAsync(string mac, string name, CancellationToken cancellationToken) =>
         await db.PxeComputers.Where(row => row.Mac == mac && row.Name == null)
