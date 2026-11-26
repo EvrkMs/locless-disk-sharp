@@ -1,6 +1,6 @@
 <Solution>
+  <Project Path="LoclessDisk.Server/LoclessDisk.Server.csproj" />
   <Project Path="LoclessDisk.Core/LoclessDisk.Core.csproj" />
   <Project Path="LoclessDisk.Images/LoclessDisk.Images.csproj" />
-  <Project Path="LoclessDisk.Server/LoclessDisk.Server.csproj" />
   <Project Path="LoclessDisk.Storage/LoclessDisk.Storage.csproj" />
 </Solution>
