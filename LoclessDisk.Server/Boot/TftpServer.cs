@@ -45,12 +45,7 @@ internal sealed class TftpServer(string root, string scriptUrl, ILogger log)
                     Reject(transfer, new TftpErrorPacket(0, "Server busy"));
                     return;
                 }
-                if (transfer.TransferMode != TftpTransferMode.octet)
-                {
-                    Reject(transfer, new TftpErrorPacket(4, "Expected an octet read request"));
-                    return;
-                }
-
+                // Tftp.Net does not populate TransferMode for an incoming RRQ.
                 Stream stream;
                 try
                 {
