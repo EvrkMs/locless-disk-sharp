@@ -11,7 +11,7 @@ let editorRequest = 0;
 let images = [];
 let computers = [];
 let checks = [];
-const kinds = { agent: "Проверка связи", clone: "Клонирование", deploy: "Развёртывание", format: "Форматирование" };
+const kinds = { agent: "Проверка связи", "agent-csharp": "Проверка C#-агента", clone: "Клонирование", deploy: "Развёртывание", format: "Форматирование" };
 const states = { queued: "В очереди", running: "Выполняется", succeeded: "Готово", failed: "Ошибка", cancelled: "Отменена" };
 
 function formatMac(mac) {
@@ -90,6 +90,7 @@ function hostActions(computer) {
     { text: "Развернуть", why: noImage || (current ? "" : "в образе нет версий"),
       confirm: "Стереть диск " + computer.name + "?", run: () => queueTask(computer, "deploy") },
     { text: "Проверить связь", run: () => queueTask(computer, "agent") },
+    { text: "Проверить C#-агент", run: () => queueTask(computer, "agent-csharp") },
     { text: "Форматировать в том WB", danger: true, confirm: "Стереть диск " + computer.name + "?",
       run: () => queueTask(computer, "format") },
     null, edit, remove

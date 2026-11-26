@@ -1,3 +1,5 @@
+using LoclessDisk.Server.Boot;
+using LoclessDisk.Server.Boot.GoAgent;
 using LoclessDisk.Core;
 using LoclessDisk.Server.Imaging;
 using LoclessDisk.Server.Events;
@@ -7,7 +9,8 @@ namespace LoclessDisk.Server.Controllers;
 
 [ApiController]
 [Route("api/link-checks")]
-public sealed class LinkChecksController(ILinkChecks tasks, IPxeComputers computers, IImageCatalog catalog, LinkCheckUpdates updates, DeploySessions deployments, CloneSessions clones) : ControllerBase
+public sealed class LinkChecksController(ILinkChecks tasks, IPxeComputers computers, IImageCatalog catalog, LinkCheckUpdates updates, DeploySessions deployments, CloneSessions clones,
+    IPxeSettingsStore pxeSettings, IConfiguration configuration, IHostEnvironment environment) : ControllerBase
 {
     [HttpGet("events")]
     public IResult Events(CancellationToken ct) => TypedResults.ServerSentEvents(updates.Stream(ct), "tasks");
@@ -31,10 +34,22 @@ public sealed class LinkChecksController(ILinkChecks tasks, IPxeComputers comput
         if (mac.Length != 12 || !mac.All(Uri.IsHexDigit))
             return Problem("Неверный MAC-адрес.", statusCode: 400);
 
-        if (input.Kind is not (AgentTaskKind.Check or AgentTaskKind.Format or AgentTaskKind.Deploy or AgentTaskKind.Clone))
+        if (input.Kind is not (AgentTaskKind.Check or AgentTaskKind.CSharpProbe or AgentTaskKind.Format or AgentTaskKind.Deploy or AgentTaskKind.Clone))
             return Problem("Неизвестная задача.", statusCode: 400);
         if ((input.Kind is AgentTaskKind.Format or AgentTaskKind.Deploy) && !input.Confirmed)
             return Problem("Подтвердите запись на диск.", statusCode: 400);
+
+        if (input.Kind == AgentTaskKind.CSharpProbe)
+        {
+            var options = configuration.GetSection("Pxe").Get<PxeOptions>() ?? new();
+            var settings = await pxeSettings.ReadAsync(ct);
+            if (!(settings?.Enabled ?? options.Enabled) ||
+                !string.IsNullOrWhiteSpace(settings?.BootScriptUrl ?? options.BootScriptUrl))
+                return Problem("Для проверки C#-агента включите встроенную загрузку PXE.", statusCode: 409);
+            string root = Path.GetFullPath(options.EfiRoot, environment.ContentRootPath);
+            if (GoAgentEndpoints.FindFile(root, GoAgentEndpoints.CSharpAgentFile) is null)
+                return Problem("Поместите LoclessDisk.Agent.exe в папку EFI/agent.", statusCode: 409);
+        }
 
         await ImagesController.ScanGate.WaitAsync(ct);
         try

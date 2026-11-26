@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace LoclessDisk.Agent;
 
@@ -22,7 +24,7 @@ internal static class Program
         try
         {
             var target = ReadTarget(args);
-            return ProbeWindow.Run(target?.AbsoluteUri ?? "Деморежим", target is null ? null : () => CheckAsync(target));
+            return ProbeWindow.Run(target?.Url.AbsoluteUri ?? "Деморежим", target is null ? null : () => CheckAsync(target));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or JsonException)
         {
@@ -30,17 +32,20 @@ internal static class Program
         }
     }
 
-    private static Uri? ReadTarget(string[] args)
+    private sealed record ProbeTarget(Uri Url, string? Mac = null);
+
+    private static ProbeTarget? ReadTarget(string[] args)
     {
         if (args is ["--probe", var url])
-            return HttpUri(url);
+            return new ProbeTarget(HttpUri(url));
         if (args is ["--demo"])
             return null;
-        if (args.Length != 0)
+        bool pxe = args is ["--pxe"];
+        if (args.Length != 0 && !pxe)
             throw new ArgumentException("Укажите --demo или --probe http://адрес/health.");
 
         string path = Path.Combine(AppContext.BaseDirectory, "fogs-agent.json");
-        if (!File.Exists(path))
+        if (!pxe && !File.Exists(path))
             return null;
         using var config = JsonDocument.Parse(File.ReadAllBytes(path));
         if (config.RootElement.ValueKind != JsonValueKind.Object ||
@@ -49,18 +54,22 @@ internal static class Program
             string.IsNullOrWhiteSpace(mac.GetString()))
             throw new ArgumentException("В fogs-agent.json нужны адрес сервера и MAC.");
 
-        return new Uri(HttpUri(server.GetString()), "/agent/task?mac=" + Uri.EscapeDataString(mac.GetString()!));
+        string macAddress = mac.GetString()!;
+        return new ProbeTarget(new Uri(HttpUri(server.GetString()), "/agent/task?mac=" + Uri.EscapeDataString(macAddress)),
+            pxe ? macAddress : null);
     }
 
     private static Uri HttpUri(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is ("http" or "https")
             ? uri : throw new ArgumentException("Нужен абсолютный HTTP(S)-адрес.");
 
-    private static async Task<string> CheckAsync(Uri target)
+    private static async Task<string> CheckAsync(ProbeTarget target)
     {
         try
         {
-            using var response = await Client.GetAsync(target, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await Client.GetAsync(target.Url);
+            if (target.Mac is not null && response.StatusCode == HttpStatusCode.OK)
+                return await FinishProbeAsync(target, response);
             return response.StatusCode switch
             {
                 HttpStatusCode.NoContent => "HTTP 204 · Sharp доступен, активной задачи нет.",
@@ -72,9 +81,40 @@ internal static class Program
         {
             return "Sharp не ответил за 8 секунд.";
         }
+        catch (JsonException)
+        {
+            return "Sharp вернул некорректные данные о задаче.";
+        }
         catch (HttpRequestException error)
         {
             return "Ошибка HTTP · " + error.GetBaseException().Message;
         }
     }
+
+    private static async Task<string> FinishProbeAsync(ProbeTarget target, HttpResponseMessage response)
+    {
+        using var task = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
+        if (task.RootElement.ValueKind != JsonValueKind.Object ||
+            !task.RootElement.TryGetProperty("kind", out var kind) ||
+            kind.ValueKind != JsonValueKind.String || kind.GetString() != "agent-csharp" ||
+            !task.RootElement.TryGetProperty("id", out var id) ||
+            id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out long taskId) || taskId <= 0)
+            return "HTTP 200 · Sharp ответил, задачи проверки C#-агента нет.";
+
+        var url = new Uri(target.Url, $"/agent/tasks/{taskId}/finish");
+        var report = new ProbeReport(target.Mac!, true, "C#-агент запустился в WinPE и подключился к Sharp.");
+        using var body = JsonContent.Create(report, ProbeJsonContext.Default.ProbeReport);
+        using var result = await Client.PostAsync(url, body);
+        return result.StatusCode == HttpStatusCode.NoContent
+            ? "HTTP 200 · Связь проверена. Sharp принял результат."
+            : $"HTTP {(int)result.StatusCode} · Sharp ответил, но результат не принят.";
+    }
 }
+
+internal sealed record ProbeReport(
+    [property: JsonPropertyName("mac")] string Mac,
+    [property: JsonPropertyName("ok")] bool Ok,
+    [property: JsonPropertyName("message")] string Message);
+
+[JsonSerializable(typeof(ProbeReport))]
+internal sealed partial class ProbeJsonContext : JsonSerializerContext;

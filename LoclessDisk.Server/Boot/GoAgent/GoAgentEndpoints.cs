@@ -14,7 +14,11 @@ internal sealed partial class GoAgentEndpoints(
     private const string Shell =
         "[LaunchApps]\r\n%SYSTEMROOT%\\System32\\wpeinit.exe\r\n%SYSTEMROOT%\\System32\\partclone.exe\r\n";
 
-    private static readonly string[] BootFiles = ["wimboot", "WinPE/boot.wim", "agent/partclone.exe"];
+    private const string CSharpShell =
+        "[LaunchApps]\r\n%SYSTEMROOT%\\System32\\wpeinit.exe\r\n%SYSTEMROOT%\\System32\\LoclessDisk.Agent.exe, --pxe\r\n";
+    internal const string CSharpAgentFile = "agent/LoclessDisk.Agent.exe";
+    private const string GoAgentFile = "agent/partclone.exe";
+    private const string BootWim = "WinPE/boot.wim";
 
     private sealed record ProgressReport(string? Mac, int Percent, string? Stage, string? Message, JsonElement? Metrics);
     private sealed record FinishReport(string? Mac, bool Ok, string? Message, JsonElement? Metrics);
@@ -32,7 +36,11 @@ internal sealed partial class GoAgentEndpoints(
             if (task is null)
                 return Script(exitScript);
 
-            string? missing = BootFiles.FirstOrDefault(file => FindFile(file) is null);
+            bool csharp = task.Kind == AgentTaskKind.CSharpProbe;
+            string agent = csharp ? CSharpAgentFile : GoAgentFile;
+            string shell = csharp ? "winpeshl-csharp.ini" : "winpeshl.ini";
+            string[] required = ["wimboot", BootWim, agent];
+            string? missing = required.FirstOrDefault(file => FindFile(efiRoot, file) is null);
             if (missing is not null)
             {
                 log.LogWarning("Boot check {Task} for {Mac} awaits EFI file {File}", task.Id, key, missing);
@@ -42,9 +50,9 @@ internal sealed partial class GoAgentEndpoints(
             log.LogInformation("Sending WinPE script for link check {Task}, PC {Mac}", task.Id, key);
             return Script($"""
                 kernel {baseUrl}/files/wimboot index=1 || goto disk
-                initrd {baseUrl}/winpeshl.ini winpeshl.ini || goto disk
+                initrd {baseUrl}/{shell} winpeshl.ini || goto disk
                 initrd {baseUrl}/agent/{formatted.Replace(':', '-')}/{ConfigFile} {ConfigFile} || goto disk
-                initrd {baseUrl}/files/agent/partclone.exe partclone.exe || goto disk
+                initrd {baseUrl}/files/{agent} {Path.GetFileName(agent)} || goto disk
                 initrd {baseUrl}/files/WinPE/boot.wim boot.wim || goto disk
                 boot || goto disk
                 :disk
@@ -52,11 +60,13 @@ internal sealed partial class GoAgentEndpoints(
         });
 
         app.MapGet("/winpeshl.ini", () => Results.Text(Shell, "text/plain"));
-        foreach (string file in BootFiles.Append("refind.efi"))
+        app.MapGet("/winpeshl-csharp.ini", () => Results.Text(CSharpShell, "text/plain"));
+        string[] files = ["wimboot", BootWim, GoAgentFile, CSharpAgentFile, "refind.efi"];
+        foreach (string file in files)
         {
             app.MapMethods("/files/" + file, ["GET", "HEAD"], () =>
             {
-                string? path = FindFile(file);
+                string? path = FindFile(efiRoot, file);
                 return path is null ? Results.NotFound() :
                     Results.File(path, "application/octet-stream", enableRangeProcessing: true);
             });
@@ -154,7 +164,7 @@ internal sealed partial class GoAgentEndpoints(
         return true;
     }
 
-    private string? FindFile(string file)
+    internal static string? FindFile(string efiRoot, string file)
     {
         string path = efiRoot;
         try

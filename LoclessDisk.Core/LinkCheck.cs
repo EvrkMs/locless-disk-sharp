@@ -12,6 +12,7 @@ public static class LinkCheckStatus
 public static class AgentTaskKind
 {
     public const string Check = "agent";
+    public const string CSharpProbe = "agent-csharp";
     public const string Deploy = "deploy";
     public const string Clone = "clone";
     public const string Format = "format";
