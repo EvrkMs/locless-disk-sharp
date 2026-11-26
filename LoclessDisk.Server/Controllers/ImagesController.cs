@@ -40,10 +40,22 @@ public sealed class ImagesController(IImageCatalog catalog, ILogger<ImagesContro
         Ok((await catalog.ListAsync(ct)).GroupBy(v => v.ImageId).Select(group => new
         {
             id = group.Key,
-            group.First().Name,
+            name = DisplayName(group.First()),
+            path = group.First().Name,
             versions = group.Select(v => new { id = v.VersionId, v.Depth,
                 file = Path.GetFileName(v.Paths[^1]), href = "/api/images/" + group.Key + "?version=" + v.VersionId })
         }));
+
+    private static string DisplayName(ImageVersion version)
+    {
+        string[] parts = version.Name.Split(['/', '\\']);
+        string stem = Path.GetFileNameWithoutExtension(parts[^1]);
+        if (!stem.Equals("v1", StringComparison.OrdinalIgnoreCase))
+            return Path.ChangeExtension(version.Name, null);
+        if (parts.Length > 1)
+            return string.Join('/', parts[..^1]);
+        return Path.GetFileName(Path.GetDirectoryName(version.Paths[0])) ?? stem;
+    }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id, string? version, CancellationToken ct)
@@ -56,7 +68,7 @@ public sealed class ImagesController(IImageCatalog catalog, ILogger<ImagesContro
         try
         {
             using var image = await ImageChain.OpenAsync(imageVersion.Paths, ct);
-            return Ok(new { imageVersion.Name, imageVersion.VersionId, image.BlockSize, image.Manifest });
+            return Ok(new { name = DisplayName(imageVersion), imageVersion.VersionId, image.BlockSize, image.Manifest });
         }
         catch (Exception error) when (ImageScanner.IsImageError(error))
         {

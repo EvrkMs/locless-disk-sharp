@@ -14,19 +14,20 @@
   <nav class="side" aria-label="Разделы">
     <div class="brand">FOGs</div>
     <a href="#pcs" data-page="pcs">ПК<span class="badge" id="foundBadge" hidden></span></a>
+    <a href="#tasks" data-page="tasks">Задачи</a>
     <a href="#images" data-page="images">Образы</a>
     <a href="#settings" data-page="settings">Настройки</a>
     <div class="link"><span class="dot off" id="dot"></span><span id="link">подключение…</span></div>
   </nav>
   <main>
     <div id="error" role="alert"></div>
-    <div class="page" id="page-pcs" hidden>
+    <div class="page" id="page-pcs">
       <h1>ПК</h1>
       <div id="hostsError" class="alert" role="alert" hidden></div>
       <section>
-        <div class="head"><h2>Компьютеры</h2></div>
+        <div class="head"><h2>Компьютеры</h2><button type="button" class="main" id="addHost">Добавить ПК</button></div>
         <table id="hostTable" hidden>
-          <thead><tr><th>Имя</th><th>MAC</th><th>Был в сети</th><th aria-label="Действия"></th></tr></thead>
+          <thead><tr><th>Имя</th><th>MAC</th><th>Образ</th><th>Был в сети</th><th aria-label="Действия"></th></tr></thead>
           <tbody id="hosts"></tbody>
         </table>
         <div class="empty" id="noHosts">Компьютеров пока нет.</div>
@@ -39,6 +40,10 @@
         </table>
         <div class="empty" id="noFound">Здесь появятся новые ПК, когда они запросят загрузку по сети.</div>
       </section>
+    </div>
+    <div class="page" id="page-tasks" hidden>
+      <h1>Задачи</h1>
+      <div id="tasksError" class="alert" role="alert" hidden></div>
       <section>
         <div class="head"><h2>Проверки связи</h2></div>
         <table id="linkCheckTable" hidden>
@@ -48,7 +53,7 @@
         <div class="empty" id="noLinkChecks">Проверок пока нет.</div>
       </section>
     </div>
-    <div class="page" id="page-images">
+    <div class="page" id="page-images" hidden>
       <h1>Образы</h1>
       <section>
         <div class="head">
@@ -105,14 +110,19 @@
   <h2 id="registerHostTitle">Добавить ПК</h2>
   <form id="registerHostForm">
     <div class="field">
+      <label for="hostMac">MAC-адрес</label>
+      <input id="hostMac" placeholder="04:7c:16:e7:d2:1e" required>
+    </div>
+    <div class="field">
       <label for="hostName">Имя компьютера</label>
       <input id="hostName" maxlength="64" required>
-      <p id="registerMac"></p>
+      <label for="hostImage">Образ</label>
+      <select id="hostImage"><option value="">Без образа</option></select>
       <p id="registerError" role="alert"></p>
     </div>
     <div class="buttons">
       <button type="button" id="cancelRegister">Отмена</button>
-      <button type="submit" class="main">Добавить</button>
+      <button type="submit" class="main" id="hostSave">Сохранить</button>
     </div>
   </form>
 </dialog>

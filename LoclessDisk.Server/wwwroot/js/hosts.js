@@ -5,7 +5,9 @@ const byId = id => document.getElementById(id);
 const dialog = byId("registerHost");
 const form = byId("registerHostForm");
 const submit = form.querySelector('button[type="submit"]');
-let selectedMac;
+let editedComputer;
+let editorRequest = 0;
+let images = [];
 let computers = [];
 let checks = [];
 
@@ -28,7 +30,7 @@ function draw(computers) {
   for (const computer of computers) {
     const row = document.createElement("tr");
     const mac = cell(formatMac(computer.mac), "mac");
-    const seen = cell(new Date(computer.lastSeen * 1000).toLocaleString("ru-RU"), "when");
+    const seen = cell(computer.lastSeen ? new Date(computer.lastSeen * 1000).toLocaleString("ru-RU") : "—", "when");
     if (computer.name !== null) {
       const action = cell("", "actions");
       const button = document.createElement("button");
@@ -43,21 +45,20 @@ function draw(computers) {
           showError(error.message);
         }
       };
-      action.append(button);
-      row.append(cell(computer.name, "name"), mac, seen, action);
+      const edit = document.createElement("button");
+      edit.textContent = "Настроить";
+      edit.onclick = () => openComputer(computer);
+      action.append(edit, " ", button);
+      const image = images.find(item => item.id === computer.imageId);
+      row.append(cell(computer.name, "name"), mac,
+        cell(image?.name ?? (computer.imageId ? "Образ недоступен" : "—")), seen, action);
       registered.append(row);
       known++;
     } else {
       const action = cell("", "actions");
       const add = document.createElement("button");
       add.textContent = "Добавить ПК";
-      add.onclick = () => {
-        selectedMac = computer.mac;
-        byId("hostName").value = "";
-        byId("registerMac").textContent = formatMac(selectedMac);
-        byId("registerError").textContent = "";
-        dialog.showModal();
-      };
+      add.onclick = () => openComputer(computer);
       action.append(add);
       row.append(mac, seen, action);
       discovered.append(row);
@@ -75,14 +76,49 @@ function draw(computers) {
   byId("foundBadge").hidden = found === 0;
 }
 
+async function openComputer(computer) {
+  const request = ++editorRequest;
+  editedComputer = computer?.name ? computer : undefined;
+  byId("registerHostTitle").textContent = editedComputer ? "Настроить ПК" : "Добавить ПК";
+  byId("hostSave").textContent = editedComputer ? "Сохранить" : "Добавить";
+  byId("hostMac").value = computer ? formatMac(computer.mac) : "";
+  byId("hostMac").readOnly = Boolean(computer);
+  byId("hostName").value = computer?.name ?? "";
+  byId("registerError").textContent = "";
+  const select = byId("hostImage");
+  select.replaceChildren(new Option("Без образа", ""));
+  submit.disabled = true;
+  dialog.showModal();
+  try {
+    const catalog = await requestJson("/api/images");
+    if (request !== editorRequest || !dialog.open) return;
+    images = catalog;
+    for (const image of images) select.add(new Option(image.name, image.id));
+    if (computer?.imageId && !images.some(image => image.id === computer.imageId))
+      select.add(new Option("Текущий образ недоступен", computer.imageId));
+    select.value = computer?.imageId ?? "";
+    submit.disabled = false;
+  } catch (error) {
+    if (request === editorRequest && dialog.open) byId("registerError").textContent = error.message;
+  }
+}
+
+byId("addHost").onclick = () => openComputer();
 byId("cancelRegister").onclick = () => dialog.close();
+document.addEventListener("images-updated", event => {
+  images = event.detail;
+  draw(computers);
+});
+
 form.onsubmit = async event => {
   event.preventDefault();
   submit.disabled = true;
   try {
-    await requestJson("/api/hosts/" + selectedMac + "/register", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: byId("hostName").value })
+    await requestJson(editedComputer ? "/api/hosts/" + editedComputer.mac : "/api/hosts", {
+      method: editedComputer ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mac: byId("hostMac").value, name: byId("hostName").value,
+        imageId: byId("hostImage").value || null })
     });
     dialog.close();
   } catch (error) {
@@ -126,7 +162,7 @@ function drawChecks() {
           await requestJson("/api/link-checks/" + check.id, { method: "DELETE" });
         } catch (error) {
           cancel.disabled = false;
-          showError(error.message);
+          showTaskError(error.message);
         }
       };
       action.append(cancel);
@@ -141,10 +177,16 @@ function drawChecks() {
 }
 
 watchEvents("/api/link-checks/events", "tasks", data => {
+  byId("tasksError").hidden = true;
   checks = JSON.parse(data);
   draw(computers);
   drawChecks();
 }, {
-  active: () => location.hash === "#pcs",
-  onError: () => showError("Связь со списком проверок потеряна. Переподключение…")
+  active: () => ["", "#pcs", "#tasks"].includes(location.hash),
+  onError: () => showTaskError("Связь со списком проверок потеряна. Переподключение…")
 });
+
+function showTaskError(message) {
+  byId("tasksError").textContent = message;
+  byId("tasksError").hidden = false;
+}

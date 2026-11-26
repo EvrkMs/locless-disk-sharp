@@ -18,7 +18,7 @@ function setConnected(connected) {
 
 function route() {
   const hash = location.hash.slice(1);
-  const page = ["pcs", "settings"].includes(hash) ? hash : "images";
+  const page = ["images", "tasks", "settings"].includes(hash) ? hash : "pcs";
   for (const link of document.querySelectorAll("[data-page]")) {
     const selected = link.dataset.page === page;
     if (selected) link.setAttribute("aria-current", "page");
@@ -59,14 +59,21 @@ async function loadImages() {
   const images = await requestJson("/api/images");
   const rows = document.createDocumentFragment();
   for (const image of images) {
-    for (const version of image.versions) {
+    for (const [index, version] of [...image.versions].reverse().entries()) {
       const row = document.createElement("tr");
       const action = cell("", "actions");
       const button = document.createElement("button");
       button.textContent = "Подробнее";
       button.addEventListener("click", () => showVersion(image.name, version));
       action.append(button);
-      row.append(cell(image.name, "name"), cell(version.file), cell(version.depth), action);
+      if (index === 0) {
+        const title = cell(image.name, "name");
+        title.rowSpan = image.versions.length;
+        title.title = image.path;
+        row.append(title);
+      }
+      const kind = version.depth === 1 ? "полный" : "дельта";
+      row.append(cell(version.file + " · " + kind, "mac"), cell(version.depth), action);
       rows.append(row);
     }
   }
@@ -74,6 +81,7 @@ async function loadImages() {
   byId("imageTable").hidden = images.length === 0;
   byId("noImages").hidden = images.length !== 0;
   byId("imageCount").textContent = images.length;
+  document.dispatchEvent(new CustomEvent("images-updated", { detail: images }));
 }
 
 settingsForm.addEventListener("submit", async event => {

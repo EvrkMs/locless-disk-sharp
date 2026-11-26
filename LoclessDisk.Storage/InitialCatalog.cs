@@ -56,6 +56,7 @@ public sealed class CatalogDbModelSnapshot : ModelSnapshot
         modelBuilder.Entity("LoclessDisk.Storage.PxeComputerRow", entity =>
         {
             entity.Property<string>("Mac").HasColumnType("TEXT");
+            entity.Property<string>("ImageId").HasColumnType("TEXT");
             entity.Property<string>("Name").HasColumnType("TEXT");
             entity.Property<long>("LastSeen").HasColumnType("INTEGER");
             entity.HasKey("Mac");
