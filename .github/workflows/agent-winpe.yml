@@ -1,0 +1,28 @@
+name: WinPE agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - LoclessDisk.Agent/**
+      - .github/workflows/agent-winpe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish WinPE probe
+        run: dotnet publish LoclessDisk.Agent -c Release -r win-x64 -p:PublishAot=true -o artifacts/agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: locless-disk-agent-winpe-x64
+          path: artifacts/agent/LoclessDisk.Agent.exe
+          if-no-files-found: error

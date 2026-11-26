@@ -3,4 +3,5 @@
   <Project Path="LoclessDisk.Core/LoclessDisk.Core.csproj" />
   <Project Path="LoclessDisk.Images/LoclessDisk.Images.csproj" />
   <Project Path="LoclessDisk.Storage/LoclessDisk.Storage.csproj" />
+  <Project Path="LoclessDisk.Agent/LoclessDisk.Agent.csproj" />
 </Solution>
