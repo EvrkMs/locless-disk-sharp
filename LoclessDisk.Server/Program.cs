@@ -21,6 +21,8 @@ Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
 string connection = new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
 builder.Services.AddDbContext<CatalogDb>(options => options.UseSqlite(connection));
 builder.Services.AddScoped<IImageCatalog, SqliteImageCatalog>();
+builder.Services.AddScoped<IPxeSettingsStore, SqlitePxeSettingsStore>();
+builder.Services.AddScoped<IPxeComputers, SqlitePxeComputers>();
 
 builder.Services.AddControllers();
 builder.Services.AddHostedService<PxeHostedService>();

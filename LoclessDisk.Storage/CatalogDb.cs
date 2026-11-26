@@ -6,8 +6,13 @@ namespace LoclessDisk.Storage;
 
 public sealed class CatalogDb(DbContextOptions<CatalogDb> options) : DbContext(options)
 {
+    internal DbSet<PxeComputerRow> PxeComputers => Set<PxeComputerRow>();
+    internal DbSet<PxeSettingsRow> PxeSettings => Set<PxeSettingsRow>();
     internal DbSet<SettingsRow> Settings => Set<SettingsRow>();
     internal DbSet<VersionRow> Versions => Set<VersionRow>();
+
+    protected override void OnModelCreating(ModelBuilder builder) =>
+        builder.Entity<PxeComputerRow>().HasKey(row => row.Mac);
 }
 
 internal sealed class SettingsRow

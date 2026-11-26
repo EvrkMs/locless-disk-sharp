@@ -6,17 +6,40 @@
   <title>FOGs</title>
   <link rel="stylesheet" href="/css/panel.css">
   <script type="module" src="/js/settings.js"></script>
+  <script type="module" src="/js/hosts.js"></script>
+  <script type="module" src="/js/pxe-settings.js"></script>
 </head>
 <body>
 <div class="app">
   <nav class="side" aria-label="Разделы">
     <div class="brand">FOGs</div>
+    <a href="#pcs" data-page="pcs">ПК<span class="badge" id="foundBadge" hidden></span></a>
     <a href="#images" data-page="images">Образы</a>
     <a href="#settings" data-page="settings">Настройки</a>
     <div class="link"><span class="dot off" id="dot"></span><span id="link">подключение…</span></div>
   </nav>
   <main>
     <div id="error" role="alert"></div>
+    <div class="page" id="page-pcs" hidden>
+      <h1>ПК</h1>
+      <div id="hostsError" class="alert" role="alert" hidden></div>
+      <section>
+        <div class="head"><h2>Компьютеры</h2></div>
+        <table id="hostTable" hidden>
+          <thead><tr><th>Имя</th><th>MAC</th><th>Был в сети</th></tr></thead>
+          <tbody id="hosts"></tbody>
+        </table>
+        <div class="empty" id="noHosts">Компьютеров пока нет.</div>
+      </section>
+      <section>
+        <div class="head"><h2>Обнаружены в сети <span class="count" id="foundCount"></span></h2></div>
+        <table id="foundTable" hidden>
+          <thead><tr><th>MAC</th><th>Был в сети</th><th aria-label="Действия"></th></tr></thead>
+          <tbody id="found"></tbody>
+        </table>
+        <div class="empty" id="noFound">Здесь появятся новые ПК, когда они запросят загрузку по сети.</div>
+      </section>
+    </div>
     <div class="page" id="page-images">
       <h1>Образы</h1>
       <section>
@@ -45,6 +68,18 @@
           <p id="imageDirNote" role="status">Укажите существующую папку с образами.</p>
         </form>
       </section>
+      <section>
+        <div class="head"><h2>Сеть PXE</h2></div>
+        <form class="field" id="pxeForm">
+          <label for="pxeAddress">Интерфейс для клиентов</label>
+          <div class="row">
+            <select id="pxeAddress"><option value="">Выберите IPv4</option></select>
+            <label class="pxe-toggle"><input type="checkbox" id="pxeEnabled"> Включить TFTP и proxyDHCP</label>
+            <button class="main" type="submit">Сохранить</button>
+          </div>
+          <p id="pxeNote" role="status">На сервере с CCBoot оставьте службы выключенными.</p>
+        </form>
+      </section>
     </div>
   </main>
 </div>
@@ -53,6 +88,21 @@
   <div class="metrics" id="imageDetails"></div>
   <form method="dialog">
     <div class="buttons"><button>Закрыть</button></div>
+  </form>
+</dialog>
+<dialog id="registerHost" aria-labelledby="registerHostTitle">
+  <h2 id="registerHostTitle">Добавить ПК</h2>
+  <form id="registerHostForm">
+    <div class="field">
+      <label for="hostName">Имя компьютера</label>
+      <input id="hostName" maxlength="64" required>
+      <p id="registerMac"></p>
+      <p id="registerError" role="alert"></p>
+    </div>
+    <div class="buttons">
+      <button type="button" id="cancelRegister">Отмена</button>
+      <button type="submit" class="main">Добавить</button>
+    </div>
   </form>
 </dialog>
 </body>

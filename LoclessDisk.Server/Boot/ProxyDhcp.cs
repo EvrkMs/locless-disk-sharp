@@ -6,7 +6,7 @@ using static System.Buffers.Binary.BinaryPrimitives;
 
 namespace LoclessDisk.Server.Boot;
 
-internal sealed class ProxyDhcp(IPAddress address, PxeOptions options, HashSet<string> allowed,
+internal sealed class ProxyDhcp(IPAddress address, PxeOptions options, Func<string, CancellationToken, Task<bool>> observe,
     ILogger log)
 {
     private static ReadOnlySpan<byte> Cookie => [99, 130, 83, 99];
@@ -22,7 +22,7 @@ internal sealed class ProxyDhcp(IPAddress address, PxeOptions options, HashSet<s
             try
             {
                 var received = await socket.ReceiveFromAsync(buffer.AsMemory(), SocketFlags.None, any, ct);
-                var reply = BuildReply(buffer.AsSpan(0, received.ReceivedBytes), discovery);
+                var reply = await BuildReplyAsync(buffer.AsMemory(0, received.ReceivedBytes), discovery, ct);
                 if (reply is not null)
                     await socket.SendToAsync(reply.AsMemory(), SocketFlags.None,
                         discovery ? broadcast : received.RemoteEndPoint, ct);
@@ -36,30 +36,46 @@ internal sealed class ProxyDhcp(IPAddress address, PxeOptions options, HashSet<s
         }
     }
 
-    internal byte[]? BuildReply(ReadOnlySpan<byte> request, bool discovery)
+    internal async Task<byte[]?> BuildReplyAsync(ReadOnlyMemory<byte> request, bool discovery, CancellationToken ct)
+    {
+        var (packet, received) = ParseRequest(request.Span, discovery);
+        if (packet is null || received is null)
+            return null;
+
+        string mac = Convert.ToHexString(packet.chaddr);
+        if (!await observe(mac, ct))
+            return null;
+
+        return BuildReply(packet, received, discovery, mac);
+    }
+
+    private static (DHCPv4Packet?, Dictionary<byte, byte[]>?) ParseRequest(
+        ReadOnlySpan<byte> request, bool discovery)
     {
         if (request.Length < 240 || request[0] != 1 || request[1] != 1 || request[2] != 6 ||
             !request.Slice(236, 4).SequenceEqual(Cookie))
-            return null;
+            return (null, null);
 
         var packet = new DHCPv4Packet();
         if (!packet.parsePacket(request.ToArray()))
-            return null;
+            return (null, null);
 
         var received = ReadOptions(packet.dhcpOptions);
         if (received is null)
-            return null;
+            return (null, null);
 
         byte expectedType = discovery ? (byte)1 : (byte)3;
         if (!received.TryGetValue(53, out var type) || type.Length != 1 || type[0] != expectedType ||
             !received.TryGetValue(60, out var vendor) || !vendor.AsSpan().StartsWith("PXEClient"u8) ||
             !received.TryGetValue(93, out var arch) || arch.Length < 2 ||
             ReadUInt16BigEndian(arch) is not (7 or 9))
-            return null;
+            return (null, null);
 
-        string mac = Convert.ToHexString(packet.chaddr);
-        if (!allowed.Contains(mac))
-            return null;
+        return (packet, received);
+    }
+
+    private byte[] BuildReply(DHCPv4Packet packet, Dictionary<byte, byte[]> received, bool discovery, string mac)
+    {
         bool ipxe = received.TryGetValue(77, out var userClass) && userClass.AsSpan().IndexOf("iPXE"u8) >= 0;
         string formattedMac = string.Join(':', Enumerable.Range(0, 6).Select(i => mac.Substring(i * 2, 2)))
             .ToLowerInvariant();

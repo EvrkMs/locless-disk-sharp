@@ -17,7 +17,8 @@ function setConnected(connected) {
 }
 
 function route() {
-  const page = location.hash === "#settings" ? "settings" : "images";
+  const hash = location.hash.slice(1);
+  const page = ["pcs", "settings"].includes(hash) ? hash : "images";
   for (const link of document.querySelectorAll("[data-page]")) {
     const selected = link.dataset.page === page;
     if (selected) link.setAttribute("aria-current", "page");
