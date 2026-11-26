@@ -23,11 +23,30 @@ internal sealed class ChangeSignal
             FullMode = BoundedChannelFullMode.DropWrite
         });
         subscribers.TryAdd(subscriber, 0);
+        using var disconnect = cancellationToken.Register(() => subscriber.Writer.TryComplete());
+        subscriber.Writer.TryWrite(0); // Send the initial snapshot on the same path as updates.
         try
         {
-            yield return await snapshot(cancellationToken);
-            await foreach (var _ in subscriber.Reader.ReadAllAsync(cancellationToken))
-                yield return await snapshot(cancellationToken);
+            await foreach (var _ in subscriber.Reader.ReadAllAsync())
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    yield break;
+
+                T value;
+                try
+                {
+                    value = await snapshot(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    yield break;
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                    yield break;
+
+                yield return value;
+            }
         }
         finally
         {
