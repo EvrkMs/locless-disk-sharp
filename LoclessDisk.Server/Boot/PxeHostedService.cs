@@ -106,7 +106,19 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             var computers = scope.ServiceProvider.GetRequiredService<IPxeComputers>();
             try
             {
-                return await computers.ObserveAsync(mac, ct) && root is not null && (http?.IsListening ?? true);
+                bool registered = await computers.ObserveAsync(mac, ct);
+                if (!registered)
+                {
+                    log.LogInformation("PXE client {Mac} discovered. Awaiting registration", mac);
+                    return false;
+                }
+                if (root is null || http is { IsListening: false })
+                {
+                    log.LogWarning("PXE client {Mac} is registered, but no boot reply was sent: {Reason}",
+                        mac, bootError ?? "boot.ipxe HTTP listener is not ready");
+                    return false;
+                }
+                return true;
             }
             catch (System.Data.Common.DbException error)
             {

@@ -30,7 +30,8 @@ internal sealed class BootHttpServer(ILogger log)
                         parsed.GetAddressBytes().Length != 6)
                         return Results.BadRequest("Invalid MAC address.");
 
-                    // Sharp has no deployment tasks yet, so all clients continue to disk.
+                    log.LogInformation("boot.ipxe requested for {Mac} from {Address}. Continuing to local disk",
+                        parsed, context.Connection.RemoteIpAddress);
                     return Results.Text("#!ipxe\n" + BootScripts.LocalDisk, "text/plain; charset=utf-8");
                 });
 

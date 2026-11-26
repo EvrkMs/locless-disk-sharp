@@ -24,8 +24,14 @@ internal sealed class ProxyDhcp(IPAddress address, PxeOptions options, Func<stri
                 var received = await socket.ReceiveFromAsync(buffer.AsMemory(), SocketFlags.None, any, ct);
                 var reply = await BuildReplyAsync(buffer.AsMemory(0, received.ReceivedBytes), discovery, ct);
                 if (reply is not null)
-                    await socket.SendToAsync(reply.AsMemory(), SocketFlags.None,
-                        discovery ? broadcast : received.RemoteEndPoint, ct);
+                {
+                    var destination = discovery ? broadcast : received.RemoteEndPoint;
+                    await socket.SendToAsync(reply.AsMemory(), SocketFlags.None, destination, ct);
+                    string mac = Convert.ToHexString(reply.AsSpan(28, 6));
+                    string boot = Encoding.ASCII.GetString(reply.AsSpan(108, 128)).TrimEnd('\0');
+                    log.LogInformation("PXE {MessageType} sent for {Mac} to {Endpoint}, boot {Boot}",
+                        discovery ? "OFFER" : "ACK", mac, destination, boot);
+                }
             }
             catch (SocketException error) when (error.SocketErrorCode is SocketError.ConnectionReset
                 or SocketError.ConnectionRefused or SocketError.MessageSize)

@@ -60,7 +60,7 @@ function draw(computers) {
 }
 
 async function refresh() {
-  if (refreshing) return;
+  if (refreshing || document.hidden || location.hash !== "#pcs") return;
   refreshing = true;
   try {
     draw(await requestJson("/api/hosts"));
@@ -92,5 +92,6 @@ form.onsubmit = async event => {
 };
 
 window.addEventListener("hashchange", refresh);
+document.addEventListener("visibilitychange", refresh);
 await refresh();
-window.setInterval(refresh, 3000);
+window.setInterval(refresh, 5000);

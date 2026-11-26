@@ -39,6 +39,7 @@ internal sealed class TftpServer(string root, string scriptUrl, ILogger log)
         {
             lock (admission)
             {
+                log.LogInformation("TFTP read request for {File} from {Client}", transfer.Filename, client);
                 if (stopping || active.Count >= TransferLimit)
                 {
                     Reject(transfer, new TftpErrorPacket(0, "Server busy"));
@@ -57,16 +58,21 @@ internal sealed class TftpServer(string root, string scriptUrl, ILogger log)
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
                 {
+                    log.LogWarning("TFTP could not open {File} for {Client}: {Error}", transfer.Filename, client, error.Message);
                     Reject(transfer, error is FileNotFoundException or DirectoryNotFoundException
                         ? TftpErrorPacket.FileNotFound : TftpErrorPacket.AccessViolation);
                     return;
                 }
 
                 active.TryAdd(transfer, 0);
-                transfer.OnFinished += completed => Complete(completed, active);
+                transfer.OnFinished += completed =>
+                {
+                    log.LogInformation("TFTP sent {File} to {Client}", completed.Filename, client);
+                    Complete(completed, active);
+                };
                 transfer.OnError += (failed, error) =>
                 {
-                    log.LogDebug("TFTP transfer of {File} to {Client} stopped: {Error}",
+                    log.LogInformation("TFTP transfer of {File} to {Client} stopped: {Error}",
                         failed.Filename, client, error);
                     Complete(failed, active);
                 };
