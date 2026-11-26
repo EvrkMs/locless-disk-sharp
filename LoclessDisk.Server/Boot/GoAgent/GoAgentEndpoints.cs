@@ -49,7 +49,7 @@ internal sealed partial class GoAgentEndpoints(
             log.LogInformation("PXE task {Task} ({Kind}) for {Mac} uses {Agent}", task.Id, task.Kind, key, agent);
             return Script($"""
                 kernel {baseUrl}/files/wimboot index=1 || goto disk
-                initrd {baseUrl}/{shell} winpeshl.ini || goto disk
+                initrd --name winpeshl.ini {baseUrl}/{shell} winpeshl.ini || goto disk
                 initrd {baseUrl}/agent/{formatted.Replace(':', '-')}/{ConfigFile} {ConfigFile} || goto disk
                 initrd {baseUrl}/files/{agent} {Path.GetFileName(agent)} || goto disk
                 initrd {baseUrl}/files/WinPE/boot.wim boot.wim || goto disk
