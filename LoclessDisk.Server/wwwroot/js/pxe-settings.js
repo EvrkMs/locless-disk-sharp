@@ -1,3 +1,4 @@
+import { watchEvents } from "./lib/events.js";
 import { requestJson } from "./lib/http.js";
 
 const form = document.getElementById("pxeForm");
@@ -44,12 +45,11 @@ form.addEventListener("submit", async event => {
   }
 });
 
-window.setInterval(async () => {
-  if (location.hash !== "#settings") return;
-  try {
-    const settings = await requestJson("/api/settings/pxe");
-    listenerStatus.textContent = settings.listenerStatus;
-  } catch (error) {
-    listenerStatus.textContent = error.message;
+watchEvents("/api/settings/pxe/events", "status", data => {
+  listenerStatus.textContent = data;
+}, {
+  active: () => location.hash === "#settings",
+  onError() {
+    listenerStatus.textContent = "Связь со службой PXE потеряна. Переподключение…";
   }
-}, 3000);
+});

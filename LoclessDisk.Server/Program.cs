@@ -1,6 +1,7 @@
 using System.Net;
 using LoclessDisk.Core;
 using LoclessDisk.Server.Boot;
+using LoclessDisk.Server.Events;
 using LoclessDisk.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +28,7 @@ builder.Services.AddScoped<IPxeComputers, SqlitePxeComputers>();
 
 builder.Services.AddControllers();
 builder.Services.AddSingleton<PxeListenerStatus>();
+builder.Services.AddSingleton<HostUpdates>();
 builder.Services.AddHostedService<PxeHostedService>();
 
 var app = builder.Build();

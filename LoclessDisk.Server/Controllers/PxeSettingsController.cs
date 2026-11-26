@@ -18,6 +18,9 @@ public sealed class PxeSettingsController(IPxeSettingsStore store, IConfiguratio
             bootScriptUrl = settings.BootScriptUrl ?? defaults.BootScriptUrl, interfaces = PxeInterfaces.List(), listenerStatus = listener.Message });
     }
 
+    [HttpGet("events")]
+    public IResult Events(CancellationToken ct) => TypedResults.ServerSentEvents(listener.Stream(ct), "status");
+
     [HttpPut]
     public async Task<IActionResult> Put(PxeSettings settings, CancellationToken ct)
     {

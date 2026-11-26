@@ -1,15 +1,19 @@
 using LoclessDisk.Core;
+using LoclessDisk.Server.Events;
 using Microsoft.AspNetCore.Mvc;
 
 namespace LoclessDisk.Server.Controllers;
 
 [ApiController]
 [Route("api/hosts")]
-public sealed class HostsController(IPxeComputers computers) : ControllerBase
+public sealed class HostsController(IPxeComputers computers, HostUpdates updates) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct) =>
         Ok(await computers.ListAsync(ct));
+
+    [HttpGet("events")]
+    public IResult Events(CancellationToken ct) => TypedResults.ServerSentEvents(updates.Stream(ct), "hosts");
 
     [HttpPost("{mac}/register")]
     public async Task<IActionResult> Register(string mac, Registration input, CancellationToken ct)
@@ -24,6 +28,7 @@ public sealed class HostsController(IPxeComputers computers) : ControllerBase
 
         if (!await computers.RegisterAsync(mac, name, ct))
             return Problem("Компьютер уже добавлен или ещё не обнаружен.", statusCode: 409);
+        updates.Publish();
         return Ok(new { mac, name });
     }
 

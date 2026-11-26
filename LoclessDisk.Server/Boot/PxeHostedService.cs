@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using LoclessDisk.Core;
+using LoclessDisk.Server.Events;
 
 namespace LoclessDisk.Server.Boot;
 
@@ -14,7 +15,7 @@ internal sealed record PxeOptions
     public int HttpPort { get; set; } = 8080;
 }
 
-internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status,
+internal sealed class PxeHostedService(IConfiguration configuration, IHostEnvironment environment, IServiceScopeFactory scopes, PxeListenerStatus status, HostUpdates hosts,
     ILogger<PxeHostedService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -106,8 +107,10 @@ internal sealed class PxeHostedService(IConfiguration configuration, IHostEnviro
             var computers = scope.ServiceProvider.GetRequiredService<IPxeComputers>();
             try
             {
-                bool registered = await computers.ObserveAsync(mac, ct);
-                if (!registered)
+                var observation = await computers.ObserveAsync(mac, ct);
+                if (observation.Updated)
+                    hosts.Publish();
+                if (!observation.Registered)
                 {
                     log.LogInformation("PXE client {Mac} discovered. Awaiting registration", mac);
                     return false;

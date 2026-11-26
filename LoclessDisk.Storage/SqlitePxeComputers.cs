@@ -12,15 +12,16 @@ internal sealed class PxeComputerRow
 
 public sealed class SqlitePxeComputers(CatalogDb db) : IPxeComputers
 {
-    public async Task<bool> ObserveAsync(string mac, CancellationToken cancellationToken)
+    public async Task<PxeObservation> ObserveAsync(string mac, CancellationToken cancellationToken)
     {
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
+        int updated = await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "PxeComputers" ("Mac", "LastSeen") VALUES ({mac}, {now})
             ON CONFLICT ("Mac") DO UPDATE SET "LastSeen" = excluded."LastSeen"
                 WHERE "PxeComputers"."LastSeen" < excluded."LastSeen"
             """, cancellationToken);
-        return await db.PxeComputers.AnyAsync(row => row.Mac == mac && row.Name != null, cancellationToken);
+        bool registered = await db.PxeComputers.AnyAsync(row => row.Mac == mac && row.Name != null, cancellationToken);
+        return new PxeObservation(registered, updated > 0);
     }
 
     public async Task<IReadOnlyList<PxeComputer>> ListAsync(CancellationToken cancellationToken) =>

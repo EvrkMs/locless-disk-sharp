@@ -1,3 +1,4 @@
+import { watchEvents } from "./lib/events.js";
 import { requestJson } from "./lib/http.js";
 
 const byId = id => document.getElementById(id);
@@ -5,7 +6,6 @@ const dialog = byId("registerHost");
 const form = byId("registerHostForm");
 const submit = form.querySelector('button[type="submit"]');
 let selectedMac;
-let refreshing = false;
 
 function formatMac(mac) {
   return mac.match(/../g).join(":").toLowerCase();
@@ -59,20 +59,6 @@ function draw(computers) {
   byId("foundBadge").hidden = found === 0;
 }
 
-async function refresh() {
-  if (refreshing || document.hidden || location.hash !== "#pcs") return;
-  refreshing = true;
-  try {
-    draw(await requestJson("/api/hosts"));
-    byId("hostsError").hidden = true;
-  } catch (error) {
-    byId("hostsError").textContent = error.message;
-    byId("hostsError").hidden = false;
-  } finally {
-    refreshing = false;
-  }
-}
-
 byId("cancelRegister").onclick = () => dialog.close();
 form.onsubmit = async event => {
   event.preventDefault();
@@ -83,7 +69,6 @@ form.onsubmit = async event => {
       body: JSON.stringify({ name: byId("hostName").value })
     });
     dialog.close();
-    await refresh();
   } catch (error) {
     byId("registerError").textContent = error.message;
   } finally {
@@ -91,7 +76,12 @@ form.onsubmit = async event => {
   }
 };
 
-window.addEventListener("hashchange", refresh);
-document.addEventListener("visibilitychange", refresh);
-await refresh();
-window.setInterval(refresh, 5000);
+watchEvents("/api/hosts/events", "hosts", data => {
+  draw(JSON.parse(data));
+  byId("hostsError").hidden = true;
+}, {
+  onError() {
+    byId("hostsError").textContent = "Связь со списком ПК потеряна. Переподключение…";
+    byId("hostsError").hidden = false;
+  }
+});
